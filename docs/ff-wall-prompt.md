@@ -11,28 +11,34 @@ Add a **wall mode** to the F&F mockup: the 3D photo view can be shown across 2+ 
 
 The target is the 3D scene that shows photos in space in the mockup (`app/index.html`, the `.s3` CSS-3D scenes: Space / Circles / Rashomon). Read `CLAUDE.md` first. If it turns out I meant the Family Galaxy (`app/galaxy/`, three.js), ask me before starting. Change only the project you're working on.
 
-## Backend: reuse the Tiled server (don't build one)
+## Backend: a small dedicated server, inside this repo
 
-Vercel can't hold WebSockets, so use the room server that's already running for my Tiled app:
+F&F gets its **own** sync server. Do not use or depend on my Tiled server. (Vercel can't hold WebSockets, so this has to be a separate service.)
 
-- Server: `https://tiled-1ggj.onrender.com` (repo `AD-120/tiled`, file `server.js`). Put it in a constant `WALL_SERVER`, overridable with `?wallServer=http://localhost:8080` for local testing.
-- It is a free Render instance: after ~15 min idle the first request takes ~30 s. Show a "Waking the wall server…" state, don't fail fast.
-- Rooms live in memory. A server restart drops them, so handle `noroom` by going back to the start screen.
+- Put it in `wall-server/` at the repo root: `package.json` (Node ≥ 18, deps `ws` and `qrcode` only), `server.js`, `README.md`. Add a root `render.yaml` that deploys it as its own Render web service: `name: ff-wall`, `rootDir: wall-server`, `plan: free`, `buildCommand: npm ci`, `startCommand: node server.js`, `healthCheckPath: /healthz`. Vercel keeps serving only `app/`, so make sure nothing in `wall-server/` ends up in the site.
+- Update `CLAUDE.md`: a third part, "Wall server", in its own folder. It belongs to the mockup's wall mode.
+- Reference only: my Tiled app (`github.com/AD-120/tiled`, `server.js` and `public/common.js`) already solves rooms, tiles and the clock. Read it with `gh` and borrow the ideas, but write a lean server for this app. Keep it about 150 lines: no video, uploads, dancers or hockey.
+- In the client, put the server address in a constant `WALL_SERVER` (the Render URL once it's deployed), overridable with `?wallServer=http://localhost:8787` for local testing.
+- Free Render instances sleep after ~15 min idle, and the first request then takes ~30 s. Show a "Waking the wall server…" state, don't fail fast.
+- Rooms live in memory. Drop a room 1 h after its last client leaves. Handle `noroom` in the client by going back to the start screen.
 
-Protocol (all JSON):
+The server's protocol (all JSON):
 
 | Step | Call | Reply |
 |---|---|---|
-| Open a room | `POST {WALL_SERVER}/api/room` (CORS is allowed) | `{ code: "AB12" }` |
-| Connect | WebSocket `wss://…/ws`, send `{t:'hello', role:'screen', room, w, h, tile?}`, where `w,h` = this phone's viewport in CSS px | `{t:'welcome', id}` then `{t:'state', state, screens, sync, serverNow}`, or `{t:'noroom'}` |
-| Layout | `state.rows`, `state.cols`, `state.gap` (bezel px), `screens: [{id, tile, w, h}]`. The server gives each phone a free tile | resent on every change |
-| Pick my spot | `{t:'setTile', tile}` (swaps with whoever had it) | new `state` |
-| Viewport changed | `{t:'viewport', w, h}` | new `state` |
-| Change layout | `{t:'cmd', action:'layout', rows, cols}`, `{t:'cmd', action:'settings', gap}` | new `state` |
-| Flash numbers | `{t:'cmd', action:'identify'}` | everyone gets `{t:'identify'}` |
-| Clock | `{t:'ping', c: performance.now()}` | `{t:'pong', c, s}`: offset = `s - (c + rtt/2)`, keep the lowest-RTT samples |
-| **Share scene state** | `{t:'sync', data:{…}}`: shallow-merged into the room | everyone else gets `{t:'sync', data, from}`; late joiners get the merged object as `state.sync` |
-| Join QR | `<img src="{WALL_SERVER}/qr.svg?text={encodeURIComponent(joinUrl)}">` | SVG |
+| Open a room | `POST /api/room` (CORS open to `*` on `/api` and `/qr.svg`) | `{ code: "AB12" }` (4 chars, no 0/O/1/I) |
+| Connect | WebSocket `/ws`, send `{t:'hello', room, w, h, tile?}`, where `w,h` = this phone's viewport in CSS px | `{t:'welcome', id}` then `{t:'state', state, screens, sync, serverNow}`, or `{t:'noroom'}` |
+| Layout | `state = {rows, cols, gap}` (default 2×1, gap 0), `screens: [{id, tile, w, h}]`. Give each new phone the first free tile; repack when the layout shrinks | `state` re-broadcast to the room on every change |
+| Pick my spot | `{t:'setTile', tile}` (swaps with whoever had it) | `state` |
+| Viewport changed | `{t:'viewport', w, h}` | `state` |
+| Change layout | `{t:'layout', rows, cols}` (1–6 each), `{t:'gap', gap}` (0–200) | `state` |
+| Flash numbers | `{t:'identify'}` | everyone gets `{t:'identify'}` |
+| Clock | `{t:'ping', c}` | `{t:'pong', c, s: Date.now()}`. Client offset = `s - (c + rtt/2)`, keep the lowest-RTT samples |
+| **Share scene state** | `{t:'sync', data:{…}}`: shallow-merged into the room's `sync` | everyone **else** gets `{t:'sync', data, from}`; late joiners get the merged object in `state.sync` |
+| Join QR | `GET /qr.svg?text=<url>` (http/https only, ≤ 500 chars) | SVG |
+| Health | `GET /healthz` | `ok` |
+
+Also: WebSocket `maxPayload` 64 KB, ping/terminate dead sockets every 25 s (Render's proxy drops idle ones), cap rooms at ~500.
 
 Only camera/scene state goes through the server (angles, zoom, which screen, which item is selected). **Never send photos or names.**
 
@@ -95,7 +101,8 @@ Portrait phones only for v1.
 
 ## Done when
 
-- Local: `python3 -m http.server 8765 --directory app`, Tiled server running locally (`npm start` in the Tiled repo) or the Render one. Two browser tabs at 375×812 in one room, stacked: the scene continues across the seam with no jump in perspective.
+- Local: `cd wall-server && npm install && PORT=8787 node server.js`, plus `python3 -m http.server 8765 --directory app`, and open the app with `?wallServer=http://localhost:8787`. Two browser tabs at 375×812 in one room, stacked: the scene continues across the seam with no jump in perspective.
 - A drag in one tab updates the other within ~100 ms. A third tab that joins late shows the current camera at once.
 - `?wall=` links work from the QR on a real phone, and on a Vercel preview URL (push to a branch, not `main`).
+- Deploying the server is my step: tell me exactly what to click on Render (New → Blueprint → this repo). Then put the Render URL into `WALL_SERVER`.
 - Report what you tested and what you couldn't (for example, real phones).
