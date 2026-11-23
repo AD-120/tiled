@@ -84,6 +84,7 @@ function createRoom(code = newCode()) {
     clients: new Map(), // id -> { ws, role, tile, w, h }
     uploads: [],        // [{ name, src, file }]
     items: [], zTop: 0, // dancers
+    puck: null,         // hockey: { x, y, vx, vy, t } in wall px, t = server ms
     lastSeen: now(),
     state: {
       video: first ? first.src : null,
@@ -93,7 +94,8 @@ function createRoom(code = newCode()) {
       loop: true,
       audio: 'first',  // first | all | none
       orient: 'portrait', // how phones are held: portrait | landscape
-      mode: 'video',   // video | dancers
+      mode: 'video',   // video | dancers | hockey
+      score: [0, 0],   // hockey: [top player, bottom player]
       playing: false,
       pos: 0,          // media time (s) valid at `at`
       at: now(),       // server time (ms)
@@ -142,7 +144,7 @@ function broadcast(room, msg) {
 }
 const broadcastState = room => broadcast(room, {
   t: 'state', room: room.code, state: room.state, screens: screensOf(room), videos: videosOf(room),
-  items: room.items, serverNow: now(),
+  items: room.items, puck: room.puck, serverNow: now(),
 });
 
 function freeTile(room) {
@@ -150,6 +152,22 @@ function freeTile(room) {
   const taken = new Set(screensOf(room).map(s => s.tile));
   for (let i = 0; i < n; i++) if (!taken.has(i)) return i;
   return 0;
+}
+
+function applyLayout(room, rows, cols) {
+  const s = room.state;
+  s.rows = Math.max(1, Math.min(6, rows | 0));
+  s.cols = Math.max(1, Math.min(6, cols | 0));
+  // re-pack screens whose tile no longer exists
+  const n = s.rows * s.cols;
+  const used = new Set();
+  for (const c of room.clients.values()) {
+    if (c.role !== 'screen') continue;
+    if (c.tile >= n || used.has(c.tile)) c.tile = -1; else used.add(c.tile);
+  }
+  for (const c of room.clients.values()) {
+    if (c.role === 'screen' && c.tile === -1) { c.tile = freeTile(room); used.add(c.tile); }
+  }
 }
 
 function setVideo(room, src) {
@@ -179,21 +197,9 @@ function handleCommand(room, m) {
     case 'resync': // re-anchor without moving: forces everyone to re-seek
       s.pos = currentPos(s, t + LEAD_MS); s.at = t + LEAD_MS;
       break;
-    case 'layout': {
-      s.rows = Math.max(1, Math.min(6, m.rows | 0));
-      s.cols = Math.max(1, Math.min(6, m.cols | 0));
-      // re-pack screens whose tile no longer exists
-      const n = s.rows * s.cols;
-      const used = new Set();
-      for (const c of room.clients.values()) {
-        if (c.role !== 'screen') continue;
-        if (c.tile >= n || used.has(c.tile)) c.tile = -1; else used.add(c.tile);
-      }
-      for (const c of room.clients.values()) {
-        if (c.role === 'screen' && c.tile === -1) { c.tile = freeTile(room); used.add(c.tile); }
-      }
+    case 'layout':
+      applyLayout(room, m.rows, m.cols);
       break;
-    }
     case 'settings':
       if (typeof m.gap === 'number') s.gap = Math.max(0, Math.min(200, m.gap));
       if (m.fit === 'cover' || m.fit === 'contain') s.fit = m.fit;
@@ -209,9 +215,18 @@ function handleCommand(room, m) {
       broadcast(room, { t: 'identify' });
       return;
     case 'mode':
-      if (m.mode !== 'video' && m.mode !== 'dancers') return;
+      if (!['video', 'dancers', 'hockey'].includes(m.mode)) return;
       s.mode = m.mode;
-      if (s.mode === 'dancers' && s.playing) { s.pos = currentPos(s, t); s.at = t; s.playing = false; }
+      if (s.mode !== 'video' && s.playing) { s.pos = currentPos(s, t); s.at = t; s.playing = false; }
+      if (s.mode === 'hockey') {
+        // air hockey is played on phones held upright, laid end to end
+        s.orient = 'portrait';
+        applyLayout(room, Math.max(2, screensOf(room).length), 1);
+        s.score = [0, 0]; room.puck = null;
+      }
+      break;
+    case 'resetScore':
+      s.score = [0, 0]; room.puck = null;
       break;
     case 'scatter':
       scatter(room);
@@ -400,6 +415,30 @@ wss.on('connection', ws => {
           if (it.handoff) it.z = ++room.zTop;
         }
         broadcast(room, { t: 'item', item: it, serverNow: it.t });
+        return;
+      }
+      // Hockey. The phone the puck is on computes hits with its own paddle (no lag)
+      // and publishes the new trajectory; everyone else extrapolates it.
+      case 'puck': {
+        if (room.state.mode !== 'hockey') return;
+        const num = (x, lim) => Math.max(-lim, Math.min(lim, Number(x) || 0));
+        const t = Math.max(now() - 1000, Math.min(now() + 2000, Number(m.at) || now()));
+        room.puck = { x: num(m.x, 1e5), y: num(m.y, 1e5), vx: num(m.vx, 5000), vy: num(m.vy, 5000), t, by: id };
+        broadcast(room, { t: 'puck', puck: room.puck });
+        return;
+      }
+      case 'goal': {
+        if (room.state.mode !== 'hockey') return;
+        const side = m.side === 0 ? 0 : 1; // which player scored
+        // every phone reports the same goal: count it once per shot (trajectory)
+        if (!room.puck || room.puck.scored || Math.abs(room.puck.t - Number(m.puckT)) > 2) return;
+        room.puck.scored = true;
+        room.state.score[side]++;
+        if (m.reset) {
+          const r = m.reset;
+          room.puck = { x: Number(r.x) || 0, y: Number(r.y) || 0, vx: 0, vy: 0, t: now() + 800, by: id };
+        }
+        broadcastState(room);
         return;
       }
       case 'cmd': // anyone in the room (they have the code) can drive the wall

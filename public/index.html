@@ -30,8 +30,14 @@
                              linear-gradient(to bottom, rgba(18,18,18,.18) 1px, transparent 1px), var(--grain);
            background-size: 90px 90px, 90px 90px, 6px 6px; }
   body[data-mode="dancers"] #floor { display: block; }
-  body[data-mode="dancers"] #stage video { visibility: hidden; }
-  body[data-mode="dancers"] .video-only, body:not([data-mode="dancers"]) .dancers-only { display: none !important; }
+  body:not([data-mode="video"]) #stage video { visibility: hidden; }
+  body:not([data-mode="video"]) .video-only, body:not([data-mode="dancers"]) .dancers-only,
+  body:not([data-mode="hockey"]) .hockey-only { display: none !important; }
+  #rink { position: absolute; inset: 0; width: 100%; height: 100%; display: none; touch-action: none; }
+  body[data-mode="hockey"] #rink { display: block; }
+  #menuBtn { position: absolute; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); z-index: 4; display: none;
+             width: 44px; min-height: 44px; padding: 0; font-size: 18px; opacity: .85; }
+  body[data-mode="hockey"] #menuBtn { display: inline-flex; }
   .dancer { position: absolute; left: 0; top: 0; width: 180px; height: 180px; touch-action: none; user-select: none;
             -webkit-user-select: none; -webkit-touch-callout: none; cursor: grab; will-change: transform; }
   .dancer img { width: 100%; height: 100%; image-rendering: pixelated; pointer-events: none; -webkit-user-drag: none; display: block; }
@@ -149,7 +155,8 @@
 <body>
 
 <div id="screen">
-  <div id="stage"><video id="v" playsinline webkit-playsinline preload="auto"></video><div id="floor"></div></div>
+  <div id="stage"><video id="v" playsinline webkit-playsinline preload="auto"></video><div id="floor"></div><canvas id="rink"></canvas></div>
+  <button class="btn" id="menuBtn" aria-label="Menu">☰</button>
   <button class="btn yellow big" id="pausedBadge"><span class="ico">▶</span> Play</button>
   <div id="ident"><b></b></div>
   <div id="hud" class="panel" role="dialog" aria-label="Controls">
@@ -159,8 +166,9 @@
     </div>
     <div class="hud-body">
       <div class="hud-col">
-        <div class="seg" data-seg="mode"><button data-v="video">▶ Video</button><button data-v="dancers">♪ Dancers</button></div>
+        <div class="seg" data-seg="mode"><button data-v="video">▶ Video</button><button data-v="dancers">♪ Dancers</button><button data-v="hockey">◎ Hockey</button></div>
         <button class="btn dancers-only" data-scatter type="button">Scatter dancers</button>
+        <button class="btn hockey-only" data-resetscore type="button">Reset score</button>
         <div class="transport video-only">
           <button class="btn pink" id="playBtn">Play</button>
           <input type="range" id="seek" min="0" max="1000" value="0" aria-label="Seek">
@@ -261,9 +269,11 @@
 
     <section class="panel stack">
       <h2 class="label" style="margin:0">Show</h2>
-      <div class="seg" data-seg="mode"><button data-v="video">▶ Video</button><button data-v="dancers">♪ Dancers</button></div>
+      <div class="seg" data-seg="mode"><button data-v="video">▶ Video</button><button data-v="dancers">♪ Dancers</button><button data-v="hockey">◎ Hockey</button></div>
       <p class="small dancers-only" style="margin:0">Dancers are spread across the screens. Grab one and drag it. Flick it to throw it onto the next phone.</p>
       <button class="btn dancers-only" data-scatter type="button">Scatter dancers</button>
+      <p class="small hockey-only" style="margin:0">Air hockey. Hold the phones upright and lay them end to end, one player at each end. Move your paddle on your own phone and hit the puck to the other side.</p>
+      <button class="btn hockey-only" data-resetscore type="button">Reset score</button>
     </section>
 
     <section class="panel stack video-only">
@@ -290,6 +300,7 @@
 <script type="module">
 import { Link, SyncedVideo, wallLayout, videoRect, expectedPos, fmt, WallView, bindSettings, renderSettings,
          DANCER, itemUV, uvToPx, pxToUv } from './common.js';
+import { Hockey } from './hockey.js';
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -397,6 +408,9 @@ function startRoom() {
     state = m.state; screens = m.screens; videos = m.videos;
     mergeItems(m.items || []);
     document.body.dataset.mode = state.mode;
+    if (!m.puck) hockey.setPuck(null);
+    else if (!hockey.puck || m.puck.t > hockey.puck.t - 5) hockey.setPuck(m.puck);
+    hockey.onState(state);
     const me = screens.find(s => s.id === myId);
     if (me) { myTile = me.tile; store.set(tileKey, myTile); }
     if (state.video && !v.src.endsWith(state.video)) { v.src = state.video; v.load(); }
@@ -618,6 +632,16 @@ function startRoom() {
 
   document.querySelectorAll('[data-scatter]').forEach(b => (b.onclick = () => cmd('scatter')));
 
+  // ---------- air hockey ----------
+  const hockey = new Hockey($('rink'), {
+    ctx: () => ({ state, wall: curWall, tile: curTile, view: geometry(), myTile, now: () => link.serverNow() }),
+    send: m => link.send(m),
+    toLocal,
+  });
+  link.on('puck', m => hockey.setPuck(m.puck));
+  document.querySelectorAll('[data-resetscore]').forEach(b => (b.onclick = () => cmd('resetScore')));
+  $('menuBtn').onclick = e => { e.stopPropagation(); $('hud').classList.add('show'); pokeHud(); hudWall.layout(); renderTransport(); };
+
   let rT;
   addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => { reportSize(); layout(); }, 150); });
 
@@ -652,7 +676,7 @@ function startRoom() {
   const hideHud = () => { $('hud').classList.remove('show'); renderTransport(); };
   const pokeHud = () => { clearTimeout(hudT); hudT = setTimeout(hideHud, 12000); };
   $('stage').addEventListener('click', () => {
-    if (!joined) return;
+    if (!joined || state?.mode === 'hockey') return; // in hockey a tap moves the paddle; use ☰
     if ($('hud').classList.toggle('show')) { pokeHud(); hudWall.layout(); }
     renderTransport();
   });
@@ -665,7 +689,7 @@ function startRoom() {
   function renderTransport() {
     if (!state) return;
     $('playBtn').textContent = state.playing ? 'Pause' : 'Play';
-    $('pausedBadge').classList.toggle('show', joined && state.mode !== 'dancers' && !state.playing && !$('hud').classList.contains('show'));
+    $('pausedBadge').classList.toggle('show', joined && state.mode === 'video' && !state.playing && !$('hud').classList.contains('show'));
   }
   $('playBtn').onclick = () => cmd(state.playing ? 'pause' : 'play');
   $('pausedBadge').onclick = e => { e.stopPropagation(); cmd('play'); };

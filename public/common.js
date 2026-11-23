@@ -1,3 +1,4 @@
+import { puckAt } from './hockey.js';
 // Shared client code: websocket link, clock sync, synced <video>, wall layout.
 
 export class Link {
@@ -345,9 +346,10 @@ export class WallView {
     requestAnimationFrame(loop);
   }
 
-  update(state, screens, { myTile = -1, myId = null, fallback, items, now } = {}) {
+  update(state, screens, { myTile = -1, myId = null, fallback, items, now, puck } = {}) {
     Object.assign(this, { state, screens, myTile, myId, fallback });
     if (items) this.items = items;
+    if (puck) this.puck = puck;
     if (now) this.now = now;
     this.layout();
   }
@@ -405,10 +407,28 @@ export class WallView {
     ctx.fillStyle = PAPER;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (state.mode === 'dancers') return this.drawDancers();
+    if (state.mode === 'hockey') return this.drawHockey();
     if (!(v.readyState >= 2 && v.videoWidth)) return;
     const r = videoRect(wall, v.videoWidth, v.videoHeight, state.fit);
     const s = this.scale;
     ctx.drawImage(v, r.x * s, r.y * s, r.w * s, r.h * s);
+  }
+
+  drawHockey() {
+    const { ctx, wall, scale: s } = this;
+    ctx.strokeStyle = '#ff48b0'; ctx.lineWidth = 2; ctx.setLineDash([6, 5]);
+    ctx.beginPath(); ctx.moveTo(0, wall.H / 2 * s); ctx.lineTo(wall.W * s, wall.H / 2 * s); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ff48b0';
+    const gw = wall.W * 0.46;
+    ctx.fillRect((wall.W - gw) / 2 * s, 0, gw * s, 10 * s);
+    ctx.fillRect((wall.W - gw) / 2 * s, (wall.H - 10) * s, gw * s, 10 * s);
+    const p = this.puck?.();
+    if (p) {
+      const at = puckAt(p, this.now ? this.now() : Date.now(), wall);
+      ctx.fillStyle = '#121212';
+      ctx.beginPath(); ctx.arc(at.x * s, at.y * s, 24 * s, 0, Math.PI * 2); ctx.fill();
+    }
   }
 
   drawDancers() {

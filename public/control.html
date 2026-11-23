@@ -74,8 +74,10 @@
 
     <section class="panel stack">
       <h2 class="label" style="margin:0">Show</h2>
-      <div class="seg" data-seg="mode"><button data-v="video">▶ Video</button><button data-v="dancers">♪ Dancers</button></div>
-      <button class="btn" data-scatter type="button">Scatter dancers</button>
+      <div class="seg" data-seg="mode"><button data-v="video">▶ Video</button><button data-v="dancers">♪ Dancers</button><button data-v="hockey">◎ Hockey</button></div>
+      <div class="row" style="margin:0"><button class="btn" data-scatter type="button">Scatter dancers</button>
+      <button class="btn" data-resetscore type="button">Reset hockey score</button></div>
+      <div class="chips" id="scoreChip"></div>
     </section>
 
     <section class="panel stack">
@@ -144,6 +146,7 @@ link.on('close', () => { $('conn').textContent = 'Reconnecting…'; $('conn').cl
 link.on('state', m => {
   state = m.state; screens = m.screens; videos = m.videos;
   items.length = 0; items.push(...(m.items || []).map(i => ({ ...i })));
+  puck = m.puck;
   if (state.video && !pv.src.endsWith(state.video)) { pv.src = state.video; pv.load(); }
   sync.setState(state);
   render();
@@ -152,6 +155,9 @@ pv.addEventListener('loadedmetadata', () => { link.send({ t: 'duration', video: 
 
 link.on('item', m => { const cur = items.find(i => i.id === m.item.id); if (cur) Object.assign(cur, m.item); });
 document.querySelector('[data-scatter]').onclick = () => cmd('scatter');
+document.querySelector('[data-resetscore]').onclick = () => cmd('resetScore');
+let puck = null;
+link.on('puck', m => { puck = m.puck; });
 $('playBtn').onclick = () => cmd(state.playing ? 'pause' : 'play');
 $('restart').onclick = () => cmd('restart');
 $('resync').onclick = () => cmd('resync');
@@ -174,7 +180,9 @@ setInterval(() => {
 function render() {
   $('playBtn').textContent = state.playing ? 'Pause' : 'Play';
   renderSettings({ state, videos, cmd });
-  wallView.update(state, screens, { items, now: () => link.serverNow() });
+  wallView.update(state, screens, { items, now: () => link.serverNow(), puck: () => puck });
+  $('scoreChip').innerHTML = state.mode === 'hockey'
+    ? `<span class="chip p">Top ${state.score[0]}</span><span class="chip c">Bottom ${state.score[1]}</span>` : '';
   const n = state.rows * state.cols;
   $('count').textContent = `${screens.length}/${n} phones`;
   $('screens').innerHTML = [...screens].sort((a, b) => a.tile - b.tile)

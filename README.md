@@ -20,6 +20,14 @@ Grab a dancer and drag it. **Drag it phone to phone:** pull it off the edge that
 Every phone computes the same path from the throw, so it crosses between screens smoothly. **Scatter dancers** shuffles them.
 To add dancers, drop more `.gif` files into `GIFs/`.
 
+## Air hockey
+
+**Show → Hockey** switches the room to air hockey: phones upright, stacked end to end (2 phones = top/bottom), one player at each end.
+Each phone has its own paddle; the puck slides from phone to phone. Goals are in the middle of the top and bottom ends.
+The phone whose paddle hits the puck computes the hit locally (no lag) and publishes the new trajectory; every phone
+extrapolates the same path, and goals are solved from the trajectory so none is missed or double-counted.
+Use the ☰ button in the corner for the menu (taps move your paddle). **Reset score** in the menu.
+
 ## Run locally
 
 ```bash
