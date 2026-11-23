@@ -76,7 +76,7 @@
   .topbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px;
             padding: calc(10px + env(safe-area-inset-top)) 16px 10px; background: var(--paper); border-bottom: var(--line); }
   .topbar .logo { margin-inline-end: auto; }
-  #lobby .wrap { padding-top: 18px; padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
+  #lobby .wrap { padding-top: 18px; padding-bottom: 28px; }
   details.panel > summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
   details.panel > summary::-webkit-details-marker { display: none; }
   details.panel > summary .label { margin: 0; }
@@ -87,9 +87,12 @@
   .invite p { margin: 8px 0 10px; font-size: 12px; }
   .lobby-wall { height: min(46vh, 380px); width: 100%; }
   .stack { display: grid; gap: 14px; }
-  .dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; padding: 12px 16px calc(14px + env(safe-area-inset-bottom));
+  .dock { position: sticky; bottom: 0; z-index: 4; padding: 12px 16px calc(14px + env(safe-area-inset-bottom));
           background: var(--paper); border-top: var(--line); }
   .dock .btn { max-width: 488px; margin: 0 auto; display: flex; }
+  .dock p { max-width: 488px; margin: 0 auto 8px; font-size: 11px; text-align: center; }
+  .ready { margin-top: 16px; padding-top: 14px; border-top: 1.5px dashed var(--ink); display: grid; gap: 10px; }
+  .ready p { margin: 0; font-size: 12px; }
 
   #offline { position: fixed; top: calc(10px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
              z-index: 30; display: none; }
@@ -162,6 +165,10 @@
           <button class="btn cyan" id="share" type="button">Share link</button>
         </div>
       </div>
+      <div class="ready">
+        <p><b>Everyone in?</b> This phone is part of the wall too. Pick its spot below, then:</p>
+        <button class="btn pink block goBtn" type="button">Use this phone as screen 1 ▸</button>
+      </div>
     </details>
 
     <section class="panel">
@@ -194,7 +201,7 @@
       </div>
     </section>
   </div>
-  <footer class="dock"><button class="btn pink big block" id="go">Enter screen ▸</button></footer>
+  <footer class="dock"><p id="dockHint">Every phone, this one included, is a screen.</p><button class="btn pink big block goBtn" id="go" type="button">Use this phone as screen 1 ▸</button></footer>
 </section>
 
 <div class="chip p" id="offline">Reconnecting…</div>
@@ -301,6 +308,7 @@ function startRoom() {
     if (firstState) { firstState = false; $('invite').open = isHost || screens.length <= 1; }
     $('count').textContent = `${screens.length} phone${screens.length === 1 ? '' : 's'}`;
     renderSettings({ state, videos, cmd });
+    document.querySelectorAll('.goBtn').forEach(b => (b.textContent = `Use this phone as screen ${myTile + 1} ▸`));
     wallView.update(state, screens, { myTile, fallback: geometry() });
     reportSize();
     applyAudio();
@@ -329,7 +337,7 @@ function startRoom() {
   addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => { reportSize(); layout(); }, 150); });
 
   // ---------- enter the wall (user gesture unlocks playback + sound) ----------
-  $('go').onclick = async () => {
+  const enterScreen = async () => {
     joined = true;
     show(null);
     applyAudio();
@@ -340,6 +348,7 @@ function startRoom() {
     flashIdent();
     renderTransport();
   };
+  document.querySelectorAll('.goBtn').forEach(b => (b.onclick = enterScreen));
   $('toLobby').onclick = () => { hideHud(); joined = false; applyAudio(); show('lobby'); wallView.layout(); renderTransport(); };
 
   // ---------- sound ----------
