@@ -238,9 +238,11 @@ export function bindSettings({ cmd, room, getState }) {
 
 export function renderSettings({ state, videos, cmd }) {
   const $ = id => document.getElementById(id);
+  // a control can appear more than once (lobby + in-play menu): match by id or data-seg
   const seg = (id, value, pick) => {
-    const el = $(id); if (!el) return;
-    for (const b of el.children) { b.classList.toggle('on', b.dataset.v === String(value)); b.onclick = () => pick(b.dataset.v); }
+    for (const el of document.querySelectorAll(`#${id}, [data-seg="${id}"]`)) {
+      for (const b of el.children) { b.classList.toggle('on', b.dataset.v === String(value)); b.onclick = () => pick(b.dataset.v); }
+    }
   };
   seg('orient', state.orient, v => cmd('settings', { orient: v }));
   seg('fit', state.fit, v => cmd('settings', { fit: v }));
@@ -252,14 +254,15 @@ export function renderSettings({ state, videos, cmd }) {
     $('video').innerHTML = videos.map(f => `<option value="${esc(f.src)}" ${f.src === state.video ? 'selected' : ''}>${esc(f.name)}</option>`).join('')
       || '<option>No videos yet: upload one</option>';
   }
-  const p = $('presets');
-  if (p) {
+  for (const p of document.querySelectorAll('#presets, [data-presets]')) {
     p.innerHTML = '';
     for (const pr of PRESETS) {
       const b = document.createElement('button');
+      b.type = 'button';
       b.className = 'btn preset' + (state.orient === 'landscape' ? ' land' : '') + (state.rows === pr.r && state.cols === pr.c ? ' on' : '');
       const cell = state.orient === 'landscape' ? 22 : 11;
-      b.innerHTML = `<span class="mini" style="grid-template-columns:repeat(${pr.c},${cell}px)">${'<i></i>'.repeat(pr.r * pr.c)}</span>${pr.name}`;
+      b.innerHTML = `<span class="mini" style="grid-template-columns:repeat(${pr.c},${cell}px)">${'<i></i>'.repeat(pr.r * pr.c)}</span><span class="pname">${pr.name}</span>`;
+      b.title = pr.name;
       b.onclick = () => cmd('layout', { rows: pr.r, cols: pr.c });
       p.appendChild(b);
     }
@@ -301,7 +304,8 @@ export class WallView {
       const w = this.el.clientWidth;
       if (w) this.el.style.height = Math.round(Math.min(this.maxHeight(), (w * wall.H) / wall.W)) + 'px';
     }
-    const box = this.el.getBoundingClientRect();
+    // layout size, not the on-screen box: the menu may live inside a rotated screen
+    const box = { width: this.el.clientWidth, height: this.el.clientHeight };
     if (!box.width || !box.height) return;
     const k = this.k = Math.min(box.width / wall.W, box.height / wall.H);
     this.frame.style.width = wall.W * k + 'px';
