@@ -85,6 +85,7 @@ function createRoom(code = newCode()) {
     uploads: [],        // [{ name, src, file }]
     items: [], zTop: 0, // dancers
     puck: null,         // hockey: { x, y, vx, vy, t } in wall px, t = server ms
+    sync: {},           // free-form shared state for outside apps (see 'sync' message)
     lastSeen: now(),
     state: {
       video: first ? first.src : null,
@@ -144,7 +145,7 @@ function broadcast(room, msg) {
 }
 const broadcastState = room => broadcast(room, {
   t: 'state', room: room.code, state: room.state, screens: screensOf(room), videos: videosOf(room),
-  items: room.items, puck: room.puck, serverNow: now(),
+  items: room.items, puck: room.puck, sync: room.sync, serverNow: now(),
 });
 
 function freeTile(room) {
@@ -242,6 +243,15 @@ const app = express();
 app.set('trust proxy', true);
 app.disable('x-powered-by');
 
+// Other sites may use this server as their sync backend: allow cross-origin calls to /api and /qr.svg.
+app.use(['/api', '/qr.svg'], (req, res, next) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 // /control without a room opens a fresh one
 app.get('/control', (req, res) => {
   const code = normCode(req.query.room);
@@ -278,7 +288,8 @@ app.get('/api/info', (req, res) => {
 
 app.get('/qr.svg', async (req, res) => {
   const code = normCode(req.query.room);
-  const svg = await QRCode.toString(joinUrl(req, code), { type: 'svg', margin: 1, color: { dark: '#000', light: '#fff' } });
+  const text = typeof req.query.text === 'string' && /^https?:\/\//.test(req.query.text) ? req.query.text.slice(0, 500) : null;
+  const svg = await QRCode.toString(text || joinUrl(req, code), { type: 'svg', margin: 1, color: { dark: '#000', light: '#fff' } });
   res.type('image/svg+xml').send(svg);
 });
 
@@ -439,6 +450,15 @@ wss.on('connection', ws => {
           room.puck = { x: Number(r.x) || 0, y: Number(r.y) || 0, vx: 0, vy: 0, t: now() + 800, by: id };
         }
         broadcastState(room);
+        return;
+      }
+      // Generic relay for other apps using this server (e.g. a 3D view shown across phones):
+      // shallow-merges `data` into room.sync and forwards it to everyone else in the room.
+      case 'sync': {
+        if (!m.data || typeof m.data !== 'object' || Array.isArray(m.data)) return;
+        Object.assign(room.sync, m.data);
+        const msg = JSON.stringify({ t: 'sync', data: m.data, from: id, serverNow: now() });
+        for (const [cid, c] of room.clients) if (cid !== id && c.ws.readyState === 1) c.ws.send(msg);
         return;
       }
       case 'cmd': // anyone in the room (they have the code) can drive the wall

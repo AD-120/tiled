@@ -28,6 +28,13 @@ The phone whose paddle hits the puck computes the hit locally (no lag) and publi
 extrapolates the same path, and goals are solved from the trajectory so none is missed or double-counted.
 Use the ☰ button in the corner for the menu (taps move your paddle). **Reset score** in the menu.
 
+## Using this server from another app
+
+Other sites can use this server as their sync backend (CORS is open on `/api` and `/qr.svg`):
+`POST /api/room`, WebSocket `/ws` with `hello` / `setTile` / `viewport` / `cmd`, plus a generic
+`{t:'sync', data}` relay (merged into the room and sent to everyone else; late joiners get it in `state.sync`)
+and `/qr.svg?text=<url>` for any join link. See `docs/ff-wall-prompt.md` for a worked example.
+
 ## Run locally
 
 ```bash
