@@ -42,7 +42,7 @@ Optional environment variables: `PORT`, `MAX_UPLOAD_MB` (default 200), `UPLOAD_D
 
 ## Design
 
-1-bit dither × risograph: paper, thin black lines, fluorescent pink / yellow / cyan, and greys only as dither patterns. The wall preview is the live video, ordered-dithered to 1-bit.
+1-bit dither × risograph: paper, thin black lines, fluorescent pink / yellow / cyan, and greys only as dither patterns. The video itself always plays in full colour.
 
 ## Tips
 

@@ -121,7 +121,7 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; background: var
 /* ---------- wall preview ---------- */
 .wall { position: relative; display: flex; align-items: center; justify-content: center; }
 .wall-frame { position: relative; border: var(--line); background: var(--paper); }
-.wall-frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+.wall-frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .wall-tile {
   position: absolute; border: 1px solid var(--ink); background: transparent; padding: 0; cursor: pointer;
   display: flex; align-items: flex-start; justify-content: flex-start;
@@ -134,7 +134,7 @@ input[type=range]::-moz-range-thumb { width: 14px; height: 14px; background: var
 .wall-tile.mine { outline: 3px solid var(--pink); outline-offset: -3px; z-index: 2; }
 .wall-tile.mine .tag { background: var(--pink); }
 .wall-tile.taken .tag { background: var(--yellow); }
-.wall-tile.free { background: var(--d12); }
+.wall-tile.free { border: 1.5px dashed var(--paper); }
 .wall-gap { position: absolute; background: var(--d50), var(--paper); }
 
 /* chips */

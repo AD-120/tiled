@@ -267,14 +267,13 @@ export function renderSettings({ state, videos, cmd }) {
 }
 
 // ---------------------------------------------------------------------------
-// Wall preview: the video drawn 1-bit (ordered Bayer dither) with the tiles on top.
+// Wall preview: the live video (full colour) with the tiles drawn on top.
 // ---------------------------------------------------------------------------
-const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => ((v + 0.5) / 16) * 255);
-const PAPER = [242, 238, 227], INK = [18, 18, 18];
+const PAPER = 'rgb(242, 238, 227)';
 
 export class WallView {
-  constructor(el, { video, onPick, pixel = 2, maxHeight }) {
-    this.el = el; this.video = video; this.onPick = onPick; this.pixel = pixel;
+  constructor(el, { video, onPick, maxHeight }) {
+    this.el = el; this.video = video; this.onPick = onPick;
     this.maxHeight = maxHeight; // () => px. When set, the box height follows the wall's shape.
     el.classList.add('wall');
     this.frame = document.createElement('div'); this.frame.className = 'wall-frame';
@@ -285,7 +284,7 @@ export class WallView {
     this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
     this.last = 0;
     new ResizeObserver(() => this.layout()).observe(el);
-    const loop = t => { if (t - this.last > 80 && this.el.offsetParent) { this.last = t; this.draw(); } requestAnimationFrame(loop); };
+    const loop = t => { if (t - this.last > 40 && this.el.offsetParent) { this.last = t; this.draw(); } requestAnimationFrame(loop); };
     requestAnimationFrame(loop);
   }
 
@@ -307,8 +306,9 @@ export class WallView {
     const k = this.k = Math.min(box.width / wall.W, box.height / wall.H);
     this.frame.style.width = wall.W * k + 'px';
     this.frame.style.height = wall.H * k + 'px';
-    this.canvas.width = Math.max(1, Math.round((wall.W * k) / this.pixel));
-    this.canvas.height = Math.max(1, Math.round((wall.H * k) / this.pixel));
+    this.scale = k * Math.min(devicePixelRatio || 1, 2);
+    this.canvas.width = Math.max(1, Math.round(wall.W * this.scale));
+    this.canvas.height = Math.max(1, Math.round(wall.H * this.scale));
 
     this.tiles.innerHTML = '';
     const n = state.rows * state.cols;
@@ -342,26 +342,11 @@ export class WallView {
   draw() {
     const { ctx, canvas, video: v, wall, state } = this;
     if (!wall) return;
-    const W = canvas.width, H = canvas.height;
-    ctx.fillStyle = `rgb(${PAPER})`;
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = PAPER;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (!(v.readyState >= 2 && v.videoWidth)) return;
-    const s = (this.k / this.pixel);
     const r = videoRect(wall, v.videoWidth, v.videoHeight, state.fit);
+    const s = this.scale;
     ctx.drawImage(v, r.x * s, r.y * s, r.w * s, r.h * s);
-    let img;
-    try { img = ctx.getImageData(0, 0, W, H); } catch { return; }
-    const d = img.data;
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        const i = (y * W + x) * 4;
-        // luminance, slightly contrast-boosted
-        let l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        l = (l - 128) * 1.25 + 140;
-        const c = l > BAYER[(y & 3) * 4 + (x & 3)] ? PAPER : INK;
-        d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
-      }
-    }
-    ctx.putImageData(img, 0, 0);
   }
 }

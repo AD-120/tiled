@@ -122,7 +122,7 @@ let state = null, screens = [], videos = [];
 const link = new Link(() => ({ t: 'hello', role: 'control', room }));
 const sync = new SyncedVideo(pv, link);
 const cmd = (action, extra = {}) => link.send({ t: 'cmd', action, ...extra });
-const wallView = new WallView($('wall'), { video: pv, pixel: 2, maxHeight: () => Math.min(innerHeight * 0.6, 560) });
+const wallView = new WallView($('wall'), { video: pv, maxHeight: () => Math.min(innerHeight * 0.6, 560) });
 bindSettings({ cmd, room, getState: () => state });
 
 $('roomChip').textContent = `Room ${room}`;
