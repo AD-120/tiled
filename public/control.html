@@ -65,7 +65,8 @@
         <div>
           <div class="big-code" id="code"></div>
           <div class="url" id="url"></div>
-          <p>Scan with each phone, pick a spot, tap "Enter screen".</p>
+          <p>Scan with each phone, pick a spot, tap "Use this phone as screen".</p>
+          <a class="btn pink" id="beScreen" style="margin-top:12px">Use this device as a screen ▸</a>
           <div class="chips" id="screens" style="margin-top:12px"></div>
         </div>
       </div>
@@ -128,6 +129,7 @@ bindSettings({ cmd, room, getState: () => state });
 $('roomChip').textContent = `Room ${room}`;
 $('code').textContent = room;
 $('qr').src = `qr.svg?room=${room}`;
+$('beScreen').href = `/?room=${room}`;
 fetch(`api/info?room=${room}`).then(r => r.json()).then(i => { $('url').textContent = i.joinUrl.replace(/^https?:\/\//, ''); });
 
 link.on('open', () => { $('conn').textContent = 'Connected'; $('conn').className = 'chip c'; });
