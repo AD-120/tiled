@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tiled · שליטה</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body { min-height: 100vh; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 20px;
+          grid-template-columns: minmax(0, 1.35fr) minmax(300px, 1fr); }
+  @media (max-width: 860px) { .wrap { grid-template-columns: 1fr; } }
+  header { grid-column: 1 / -1; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 26px; letter-spacing: -0.02em; }
+  header .sub { color: var(--muted); font-size: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 18px; min-width: 0; }
+  .card h2 { margin: 0 0 14px; font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: .04em; }
+  .stack { display: grid; gap: 18px; align-content: start; }
+
+  #previewBox { position: relative; width: 100%; height: min(58vh, 520px); display: flex; align-items: center; justify-content: center; }
+  #wall { position: relative; overflow: hidden; background: #050506; border-radius: 6px; }
+  #wall video { position: absolute; left: 0; top: 0; }
+  .tile { position: absolute; border: 1.5px solid rgba(255,255,255,.55); border-radius: 4px;
+          display: flex; align-items: flex-start; justify-content: flex-start; padding: 6px; }
+  .tile span { font: 700 13px/1 var(--font); background: rgba(0,0,0,.6); color: #fff; padding: 4px 7px; border-radius: 6px; }
+  .tile.empty { border-style: dashed; border-color: rgba(255,255,255,.25); background: rgba(0,0,0,.35); }
+  .tile.empty span { color: var(--muted); }
+  .gapfill { position: absolute; background: var(--panel); }
+
+  .transport { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+  .transport .time { font: 13px var(--mono); color: var(--muted); direction: ltr; min-width: 92px; text-align: center; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  #seek { flex: 1; direction: ltr; }
+  #playBtn { min-width: 92px; }
+
+  .presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+  .preset { padding: 10px 6px; flex-direction: column; gap: 8px; min-height: 0; font-size: 12px; }
+  .preset .mini { direction: ltr; display: grid; gap: 2px; width: 40px; }
+  .preset .mini i { background: var(--muted); border-radius: 2px; aspect-ratio: 9/16; }
+  .preset.on .mini i { background: var(--accent); }
+
+  .field { display: grid; gap: 8px; }
+  .field label { font-size: 14px; display: flex; justify-content: space-between; }
+  .field label output { color: var(--muted); font-family: var(--mono); }
+  .seg { display: flex; background: var(--panel-2); border: 1px solid var(--line); border-radius: 11px; padding: 3px; }
+  .seg button { flex: 1; border: 0; background: none; color: var(--muted); font: 500 14px var(--font); padding: 9px 6px; border-radius: 8px; cursor: pointer; }
+  .seg button.on { background: var(--fg); color: #000; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  select, input[type=number] { width: 100%; background: var(--panel-2); color: var(--fg); border: 1px solid var(--line);
+          border-radius: 10px; padding: 10px; font: 15px var(--font); }
+
+  .join { display: flex; gap: 16px; align-items: center; }
+  .join img { width: 132px; height: 132px; border-radius: 10px; background: #fff; flex: none; }
+  .join .url { font: 600 17px var(--mono); direction: ltr; text-align: left; word-break: break-all; }
+  .join p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .screens { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .chip { font-size: 12px; padding: 5px 9px; border-radius: 99px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
+  .chip b { color: var(--fg); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .code { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+  .code span { color: var(--muted); font-size: 13px; }
+  .code b { font: 700 30px var(--mono); letter-spacing: .12em; color: var(--accent); direction: ltr; }
+  .join .url { font-size: 13px; font-weight: 500; color: var(--muted); }
+  .bar { height: 6px; border-radius: 99px; background: var(--panel-2); overflow: hidden; display: none; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  #conn { font-size: 13px; }
+  #conn.off { color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Tiled <span class="sub">— וידאו אחד, כמה מסכים</span></h1>
+    <span class="sub" id="conn">מחובר</span>
+  </header>
+
+  <div class="stack">
+    <section class="card">
+      <h2>תצוגה מקדימה של הקיר</h2>
+      <div id="previewBox"><div id="wall"><video id="pv" muted playsinline preload="auto"></video></div></div>
+      <div class="transport">
+        <button class="btn primary" id="playBtn">נגן</button>
+        <span class="time" id="time">0:00 / 0:00</span>
+        <input type="range" id="seek" min="0" max="1000" value="0">
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn" id="restart">מההתחלה</button>
+        <button class="btn" id="resync">סנכרון מחדש</button>
+        <button class="btn" id="identify">הצג מספרים על המסכים</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="stack">
+    <section class="card">
+      <h2>חיבור טלפונים</h2>
+      <div class="join">
+        <img id="qr" alt="QR לחיבור">
+        <div>
+          <div class="code"><span>קוד חדר</span> <b id="code">…</b></div>
+          <div class="url" id="url">…</div>
+          <p>סרקו בכל טלפון, בחרו מיקום ולחצו "התחל". אפשר גם לפתוח את הכתובת ולהקליד את הקוד.</p>
+        </div>
+      </div>
+      <div class="screens" id="screens"></div>
+    </section>
+
+    <section class="card">
+      <h2>סידור</h2>
+      <div class="presets" id="presets"></div>
+      <div class="grid2" style="margin-top:14px">
+        <div class="field"><label>שורות</label><input type="number" id="rows" min="1" max="6"></div>
+        <div class="field"><label>עמודות</label><input type="number" id="cols" min="1" max="6"></div>
+      </div>
+    </section>
+
+    <section class="card stack" style="gap:16px">
+      <h2 style="margin:0">תמונה וצליל</h2>
+      <div class="field">
+        <label>מילוי</label>
+        <div class="seg" id="fit">
+          <button data-v="cover">מלא את הקיר (חיתוך)</button>
+          <button data-v="contain">הכל גלוי</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>פיצוי מסגרות <output id="gapOut">0px</output></label>
+        <input type="range" id="gap" min="0" max="80" step="1">
+      </div>
+      <div class="field">
+        <label>צליל</label>
+        <div class="seg" id="audio">
+          <button data-v="first">מסך 1 בלבד</button>
+          <button data-v="all">כל המסכים</button>
+          <button data-v="none">ללא</button>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label>וידאו</label><select id="video"></select></div>
+        <div class="field"><label>לולאה</label>
+          <div class="seg" id="loop"><button data-v="1">כן</button><button data-v="0">לא</button></div></div>
+      </div>
+      <div class="field">
+        <label>העלאת וידאו משלכם <output id="upOut"></output></label>
+        <input type="file" id="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.m4v,.webm,.mov" hidden>
+        <button class="btn" id="uploadBtn">בחרו קובץ…</button>
+        <div class="bar" id="bar"><i></i></div>
+        <span class="sub" style="font-size:12px">MP4 (H.264) עובד בכל הטלפונים. עד 200MB. הקובץ נמחק כשהחדר נסגר.</span>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script type="module">
+import { Link, SyncedVideo, wallLayout, videoRect, expectedPos, fmt } from './common.js';
+
+const $ = id => document.getElementById(id);
+const pv = $('pv');
+let state = null, screens = [], videos = [];
+
+const room = (new URLSearchParams(location.search).get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+if (!room) location.replace('/control');
+
+const link = new Link(() => ({ t: 'hello', role: 'control', room }));
+const sync = new SyncedVideo(pv, link);
+const cmd = (action, extra = {}) => link.send({ t: 'cmd', action, ...extra });
+
+$('code').textContent = room;
+$('qr').src = `qr.svg?room=${room}`;
+fetch(`api/info?room=${room}`).then(r => r.json()).then(i => {
+  $('url').textContent = i.joinUrl.replace(/^https?:\/\//, '');
+});
+
+// ---------- upload ----------
+$('uploadBtn').onclick = () => $('file').click();
+$('file').onchange = () => {
+  const f = $('file').files[0];
+  if (!f) return;
+  if (f.size > 200 * 1024 * 1024) { $('upOut').textContent = 'הקובץ גדול מ-200MB'; return; }
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', `api/upload?room=${room}&name=${encodeURIComponent(f.name)}`);
+  xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+  $('bar').style.display = 'block'; $('uploadBtn').disabled = true;
+  xhr.upload.onprogress = e => {
+    if (!e.lengthComputable) return;
+    const p = Math.round((e.loaded / e.total) * 100);
+    $('bar').firstElementChild.style.width = p + '%'; $('upOut').textContent = p + '%';
+  };
+  xhr.onloadend = () => {
+    $('uploadBtn').disabled = false; $('bar').style.display = 'none'; $('file').value = '';
+    $('upOut').textContent = xhr.status === 200 ? 'הועלה ✓' : 'ההעלאה נכשלה';
+  };
+  xhr.send(f);
+};
+
+link.on('open', () => { $('conn').textContent = 'מחובר'; $('conn').className = 'sub'; });
+link.on('close', () => { $('conn').textContent = 'מתחבר מחדש…'; $('conn').className = 'sub off'; });
+
+link.on('state', m => {
+  state = m.state; screens = m.screens; videos = m.videos;
+  const src = state.video || '';
+  if (src && !pv.src.endsWith(src)) { pv.src = src; pv.load(); }
+  sync.setState(state);
+  render();
+});
+pv.addEventListener('loadedmetadata', () => { link.send({ t: 'duration', video: state?.video, d: pv.duration }); render(); });
+addEventListener('resize', () => render());
+
+// ---------- presets ----------
+const PRESETS = [
+  { r: 2, c: 1, name: 'למעלה / למטה' },
+  { r: 1, c: 2, name: 'זה לצד זה' },
+  { r: 3, c: 1, name: '3 בטור' },
+  { r: 1, c: 3, name: '3 בשורה' },
+  { r: 2, c: 2, name: '2 × 2' },
+  { r: 2, c: 3, name: '2 × 3' },
+];
+function renderPresets() {
+  $('presets').innerHTML = '';
+  for (const p of PRESETS) {
+    const b = document.createElement('button');
+    b.className = 'btn preset' + (state.rows === p.r && state.cols === p.c ? ' on' : '');
+    b.innerHTML = `<span class="mini" style="grid-template-columns:repeat(${p.c},1fr);width:${Math.min(56, 14 * p.c + 2)}px">${'<i></i>'.repeat(p.r * p.c)}</span>${p.name}`;
+    b.onclick = () => cmd('layout', { rows: p.r, cols: p.c });
+    $('presets').appendChild(b);
+  }
+}
+$('rows').onchange = () => cmd('layout', { rows: +$('rows').value, cols: state.cols });
+$('cols').onchange = () => cmd('layout', { rows: state.rows, cols: +$('cols').value });
+
+// ---------- segmented controls ----------
+function seg(id, value, onPick) {
+  for (const b of $(id).children) {
+    b.classList.toggle('on', b.dataset.v === String(value));
+    b.onclick = () => onPick(b.dataset.v);
+  }
+}
+
+$('gap').oninput = () => { $('gapOut').textContent = $('gap').value + 'px'; };
+$('gap').onchange = () => cmd('settings', { gap: +$('gap').value });
+$('video').onchange = () => cmd('video', { video: $('video').value });
+
+// ---------- transport ----------
+$('playBtn').onclick = () => cmd(state.playing ? 'pause' : 'play');
+$('restart').onclick = () => cmd('restart');
+$('resync').onclick = () => cmd('resync');
+$('identify').onclick = () => cmd('identify');
+let scrubbing = false;
+$('seek').oninput = () => { scrubbing = true; };
+$('seek').onchange = () => {
+  scrubbing = false;
+  const d = state.duration || pv.duration;
+  if (d) cmd('seek', { pos: ($('seek').value / 1000) * d });
+};
+setInterval(() => {
+  if (!state) return;
+  const d = state.duration || pv.duration || 0;
+  const p = expectedPos(state, link.serverNow(), d);
+  $('time').textContent = `${fmt(p)} / ${fmt(d)}`;
+  if (!scrubbing && d) $('seek').value = Math.round((p / d) * 1000);
+}, 200);
+
+// ---------- render ----------
+function render() {
+  if (!state) return;
+  $('playBtn').textContent = state.playing ? 'השהה' : 'נגן';
+  $('rows').value = state.rows; $('cols').value = state.cols;
+  if (document.activeElement !== $('gap')) { $('gap').value = state.gap; $('gapOut').textContent = state.gap + 'px'; }
+  seg('fit', state.fit, v => cmd('settings', { fit: v }));
+  seg('audio', state.audio, v => cmd('settings', { audio: v }));
+  seg('loop', state.loop ? 1 : 0, v => cmd('settings', { loop: v === '1' }));
+  const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+  $('video').innerHTML = videos.map(f => `<option value="${esc(f.src)}" ${f.src === state.video ? 'selected' : ''}>${esc(f.name)}</option>`).join('')
+    || '<option>אין וידאו. העלו קובץ</option>';
+  renderPresets();
+
+  // chips
+  const n = state.rows * state.cols;
+  $('screens').innerHTML = screens.length
+    ? [...screens].sort((a, b) => a.tile - b.tile).map(s => `<span class="chip"><b>מסך ${s.tile + 1}</b> · ${s.w}×${s.h}</span>`).join('')
+    : '<span class="chip">אין טלפונים מחוברים עדיין</span>';
+  if (screens.length < n) $('screens').innerHTML += `<span class="chip">${n - screens.length} מקומות פנויים</span>`;
+
+  // preview of the wall
+  const wall = wallLayout(state, screens);
+  const box = $('previewBox').getBoundingClientRect();
+  const k = Math.min(box.width / wall.W, box.height / wall.H);
+  const el = $('wall');
+  el.style.width = wall.W * k + 'px';
+  el.style.height = wall.H * k + 'px';
+  const vr = videoRect(wall, pv.videoWidth, pv.videoHeight, state.fit);
+  Object.assign(pv.style, { left: vr.x * k + 'px', top: vr.y * k + 'px', width: vr.w * k + 'px', height: vr.h * k + 'px' });
+
+  el.querySelectorAll('.tile, .gapfill').forEach(t => t.remove());
+  for (let i = 0; i < n; i++) {
+    const t = wall.tileRect(i);
+    const holder = screens.find(s => s.tile === i);
+    const d = document.createElement('div');
+    d.className = 'tile' + (holder ? '' : ' empty');
+    Object.assign(d.style, { left: t.x * k + 'px', top: t.y * k + 'px', width: t.w * k + 'px', height: t.h * k + 'px' });
+    d.innerHTML = `<span>${i + 1}${holder ? '' : ' · פנוי'}</span>`;
+    el.appendChild(d);
+  }
+  // paint bezel gaps so you can see what gets hidden
+  if (state.gap > 0) {
+    for (let c = 1; c < state.cols; c++) {
+      const t = wall.tileRect(c);
+      const g = document.createElement('div'); g.className = 'gapfill';
+      Object.assign(g.style, { left: (t.x - state.gap) * k + 'px', top: 0, width: state.gap * k + 'px', height: '100%' });
+      el.appendChild(g);
+    }
+    for (let r = 1; r < state.rows; r++) {
+      const t = wall.tileRect(r * state.cols);
+      const g = document.createElement('div'); g.className = 'gapfill';
+      Object.assign(g.style, { top: (t.y - state.gap) * k + 'px', left: 0, height: state.gap * k + 'px', width: '100%' });
+      el.appendChild(g);
+    }
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Tiled · מסך</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  html, body { height: 100%; overflow: hidden; background: #000; overscroll-behavior: none; touch-action: manipulation; }
+  #stage { position: fixed; inset: 0; overflow: hidden; background: #000; }
+  #stage video { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; }
+
+  #join { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+          gap: 22px; padding: 24px; background: var(--bg); z-index: 10; text-align: center; }
+  #join h1 { margin: 0; font-size: 28px; letter-spacing: -0.02em; }
+  #join p { margin: 0; color: var(--muted); max-width: 320px; line-height: 1.5; }
+  .picker { direction: ltr; display: grid; gap: 8px; width: min(78vw, 300px); }
+  .picker button { aspect-ratio: 9 / 16; border-radius: 12px; border: 1.5px solid var(--line); background: var(--panel);
+                   color: var(--fg); font: 600 22px/1 var(--font); cursor: pointer; position: relative; }
+  .picker.landscape button { aspect-ratio: 16 / 9; }
+  .picker button.taken { color: var(--muted); border-style: dashed; }
+  .picker button.mine { background: var(--accent); border-color: var(--accent); color: #000; }
+  .picker button small { position: absolute; bottom: 8px; inset-inline: 0; font-size: 11px; font-weight: 500; }
+
+  #hud { position: fixed; inset: auto 12px calc(12px + env(safe-area-inset-bottom)); z-index: 5; display: none;
+         background: rgba(20,20,22,.88); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+         border: 1px solid rgba(255,255,255,.1); border-radius: 16px; padding: 14px; color: #fff; }
+  #hud.show { display: block; }
+  #hud .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+  #hud .stat { font: 12px/1.4 var(--mono); color: #aaa; direction: ltr; }
+
+  #ident { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 6;
+           font: 800 38vmin/1 var(--font); color: #fff; background: rgba(0,0,0,.55); text-shadow: 0 4px 30px #000; }
+  #ident.show { display: flex; }
+  #roomForm { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  #roomInput { width: 170px; background: var(--panel); color: var(--fg); border: 1.5px solid var(--line); border-radius: 12px;
+               padding: 12px; font: 600 22px var(--mono); text-align: center; letter-spacing: .15em; text-transform: uppercase; }
+  #roomErr { width: 100%; color: var(--warn); font-size: 14px; min-height: 1em; }
+  #roomTag { font: 13px var(--mono); color: var(--muted); }
+  #offline { position: fixed; top: calc(10px + env(safe-area-inset-top)); inset-inline: 0; margin: auto; width: max-content;
+             z-index: 7; background: #b3261e; color: #fff; padding: 6px 12px; border-radius: 99px; font-size: 13px; display: none; }
+</style>
+</head>
+<body>
+<div id="stage"><video id="v" playsinline webkit-playsinline preload="auto"></video></div>
+
+<div id="join">
+  <h1>Tiled</h1>
+  <p>בחרו איזה חלק של התמונה הטלפון הזה יציג. אחר כך הניחו את הטלפונים צמודים לפי הסידור.</p>
+  <form id="roomForm" style="display:none">
+    <input id="roomInput" autocomplete="off" autocapitalize="characters" maxlength="8" placeholder="קוד חדר" dir="ltr">
+    <button class="btn primary" type="submit">הצטרף</button>
+    <div id="roomErr"></div>
+  </form>
+  <div id="roomTag"></div>
+  <div class="picker" id="picker"></div>
+  <button class="btn primary big" id="go">התחל</button>
+  <p style="font-size:13px">טיפ: באייפון, "הוסף למסך הבית" מסתיר את שורת הכתובת ונותן מסך מלא.</p>
+</div>
+
+<div id="hud">
+  <div class="row" style="margin-bottom:10px">
+    <strong id="hudTile"></strong>
+    <span class="stat" id="stat"></span>
+  </div>
+  <div class="row">
+    <button class="btn" id="changeTile">החלף מיקום</button>
+    <button class="btn" id="fs">מסך מלא</button>
+    <button class="btn" id="mute"></button>
+  </div>
+</div>
+
+<div id="ident"></div>
+<div id="offline">מתחבר מחדש…</div>
+
+<script type="module">
+import { Link, SyncedVideo, wallLayout, videoRect } from './common.js';
+
+const $ = id => document.getElementById(id);
+const v = $('v');
+const room = (new URLSearchParams(location.search).get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+};
+const tileKey = `tiled.tile.${room}`;
+const savedTile = parseInt(store.get(tileKey), 10);
+let myId = null, myTile = Number.isInteger(savedTile) ? savedTile : -1;
+let state = null, screens = [], joined = false, userMute = null;
+
+const vp = () => ({ w: Math.round(window.innerWidth), h: Math.round(window.innerHeight) });
+
+// no room in the URL: ask for the code shown on the controller
+function askRoom(err = '') {
+  $('roomForm').style.display = 'flex';
+  $('picker').style.display = $('go').style.display = 'none';
+  $('join').querySelector('p').textContent = 'הקלידו את קוד החדר שמופיע בדף השליטה, או סרקו את ה-QR שם.';
+  $('roomErr').textContent = err;
+  $('roomInput').value = room;
+  $('roomInput').focus();
+}
+$('roomForm').onsubmit = e => {
+  e.preventDefault();
+  const code = $('roomInput').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code) location.search = `?room=${code}`;
+};
+if (!room) { askRoom(); throw new Error('no room'); }
+$('roomTag').textContent = `חדר ${room}`;
+
+const link = new Link(() => ({ t: 'hello', role: 'screen', room, tile: myTile, ...vp() }));
+const sync = new SyncedVideo(v, link);
+
+link.on('noroom', () => { link.stop(); askRoom('החדר לא נמצא. בדקו את הקוד בדף השליטה.'); });
+link.on('welcome', m => { myId = m.id; });
+link.on('open', () => { $('offline').style.display = 'none'; });
+link.on('close', () => { $('offline').style.display = 'block'; });
+link.on('identify', () => flashIdent());
+
+link.on('state', m => {
+  state = m.state; screens = m.screens;
+  const me = screens.find(s => s.id === myId);
+  if (me) { myTile = me.tile; store.set(tileKey, myTile); }
+
+  const src = state.video || '';
+  if (src && !v.src.endsWith(src)) { v.src = src; v.load(); }
+
+  applyAudio();
+  renderPicker();
+  layout();
+  sync.setState(state);
+});
+
+v.addEventListener('loadedmetadata', () => {
+  link.send({ t: 'duration', video: state?.video, d: v.duration });
+  layout();
+});
+
+// ---------- layout: show only my slice of the wall ----------
+function layout() {
+  if (!state) return;
+  const wall = wallLayout(state, screens, vp());
+  const tile = wall.tileRect(Math.max(0, myTile));
+  const vr = videoRect(wall, v.videoWidth, v.videoHeight, state.fit);
+  // my viewport may be smaller than the cell; keep my slice anchored top-left of the cell
+  v.style.width = vr.w + 'px';
+  v.style.height = vr.h + 'px';
+  v.style.transform = `translate(${vr.x - tile.x}px, ${vr.y - tile.y}px)`;
+  $('hudTile').textContent = `מסך ${myTile + 1} מתוך ${state.rows * state.cols}`;
+}
+
+let rT;
+addEventListener('resize', () => {
+  clearTimeout(rT);
+  rT = setTimeout(() => { link.send({ t: 'viewport', ...vp() }); layout(); }, 150);
+});
+
+// ---------- tile picker ----------
+function renderPicker() {
+  const p = $('picker');
+  const { rows, cols } = state;
+  p.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+  p.style.width = `min(78vw, ${Math.min(300, cols * 110)}px)`;
+  p.classList.toggle('landscape', innerWidth > innerHeight);
+  p.innerHTML = '';
+  for (let i = 0; i < rows * cols; i++) {
+    const b = document.createElement('button');
+    b.textContent = i + 1;
+    const holder = screens.find(s => s.tile === i);
+    if (i === myTile) { b.className = 'mine'; b.innerHTML += '<small>הטלפון הזה</small>'; }
+    else if (holder) { b.className = 'taken'; b.innerHTML += '<small>תפוס · החלפה</small>'; }
+    b.onclick = () => { myTile = i; link.send({ t: 'setTile', tile: i }); };
+    p.appendChild(b);
+  }
+}
+
+// ---------- start (user gesture unlocks playback + sound) ----------
+$('go').onclick = async () => {
+  joined = true;
+  $('join').style.display = 'none';
+  applyAudio();
+  try { await v.play(); if (!state?.playing) v.pause(); } catch {}
+  enterFullscreen();
+  keepAwake();
+  sync.tick(true);
+  flashIdent();
+};
+
+function shouldSound() {
+  if (userMute != null) return !userMute;
+  if (!state) return false;
+  return state.audio === 'all' || (state.audio === 'first' && myTile === 0);
+}
+function applyAudio() {
+  v.muted = !joined || !shouldSound();
+  $('mute').textContent = v.muted ? 'הפעל צליל' : 'השתק';
+}
+
+// ---------- HUD ----------
+let hudT;
+$('stage').addEventListener('click', () => {
+  if (!joined) return;
+  $('hud').classList.add('show');
+  clearTimeout(hudT); hudT = setTimeout(() => $('hud').classList.remove('show'), 4000);
+});
+$('changeTile').onclick = () => { $('hud').classList.remove('show'); $('join').style.display = 'flex'; joined = false; applyAudio(); };
+$('fs').onclick = enterFullscreen;
+$('mute').onclick = () => { userMute = !v.muted; applyAudio(); if (v.paused && state?.playing) v.play().catch(() => {}); };
+
+setInterval(() => {
+  if (!$('hud').classList.contains('show')) return;
+  $('stat').textContent = `drift ${(sync.drift * 1000).toFixed(0)}ms · rtt ${(link.rtt || 0).toFixed(0)}ms · ${v.playbackRate.toFixed(2)}x`;
+}, 250);
+
+function flashIdent() {
+  const el = $('ident');
+  el.textContent = myTile + 1;
+  el.classList.add('show');
+  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+function enterFullscreen() {
+  const el = document.documentElement;
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (req && !document.fullscreenElement) req.call(el).catch?.(() => {});
+}
+
+// Wake Lock needs HTTPS; the playing video itself keeps most phones awake on plain HTTP.
+async function keepAwake() {
+  try { if ('wakeLock' in navigator) { const l = await navigator.wakeLock.request('screen');
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); }, { once: true }); } } catch {}
+}
+</script>
+</body>
+</html>

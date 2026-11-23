@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "tiled", "runtimeExecutable": "node", "runtimeArgs": ["server.js"], "port": 8080 }
+  ]
+}
