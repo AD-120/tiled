@@ -178,3 +178,190 @@ export const fmt = s => {
   s = Math.max(0, s || 0);
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 };
+
+// ---------------------------------------------------------------------------
+// Shared UI pieces (phone lobby + desktop controller)
+// ---------------------------------------------------------------------------
+
+export const PRESETS = [
+  { r: 2, c: 1, name: 'Stacked' },
+  { r: 1, c: 2, name: 'Side by side' },
+  { r: 3, c: 1, name: '3 stacked' },
+  { r: 1, c: 3, name: '3 in a row' },
+  { r: 2, c: 2, name: '2 × 2' },
+  { r: 2, c: 3, name: '2 × 3' },
+];
+
+export const defaultTile = orient => orient === 'landscape' ? { w: 844, h: 390 } : { w: 390, h: 844 };
+
+export const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+
+// Upload a video file into a room. Resolves with the server's JSON.
+export function uploadVideo(room, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `api/upload?room=${room}&name=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = e => e.lengthComputable && onProgress?.(e.loaded / e.total);
+    xhr.onload = () => (xhr.status === 200 ? resolve(JSON.parse(xhr.responseText)) : reject(new Error(xhr.status)));
+    xhr.onerror = () => reject(new Error('network'));
+    xhr.send(file);
+  });
+}
+
+// Settings controls. Every element is optional: pages include the ones they need.
+// ids: presets, rows, cols, orient, fit, audio, loop, gap, gapOut, video, file, uploadBtn, bar, upOut
+export function bindSettings({ cmd, room, getState }) {
+  const $ = id => document.getElementById(id);
+  const on = (id, ev, fn) => $(id)?.addEventListener(ev, fn);
+  on('rows', 'change', () => cmd('layout', { rows: +$('rows').value, cols: getState().cols }));
+  on('cols', 'change', () => cmd('layout', { rows: getState().rows, cols: +$('cols').value }));
+  on('gap', 'input', () => { $('gapOut').textContent = $('gap').value + 'px'; });
+  on('gap', 'change', () => cmd('settings', { gap: +$('gap').value }));
+  on('video', 'change', () => cmd('video', { video: $('video').value }));
+  on('uploadBtn', 'click', () => $('file').click());
+  on('file', 'change', async () => {
+    const f = $('file').files[0];
+    if (!f) return;
+    if (f.size > 200 * 1024 * 1024) { $('upOut').textContent = 'Max 200MB'; return; }
+    $('bar').style.display = 'block'; $('uploadBtn').disabled = true;
+    try {
+      await uploadVideo(room, f, p => {
+        $('bar').firstElementChild.style.width = Math.round(p * 100) + '%';
+        $('upOut').textContent = Math.round(p * 100) + '%';
+      });
+      $('upOut').textContent = 'Uploaded ✓';
+    } catch { $('upOut').textContent = 'Upload failed'; }
+    $('uploadBtn').disabled = false; $('bar').style.display = 'none'; $('file').value = '';
+  });
+}
+
+export function renderSettings({ state, videos, cmd }) {
+  const $ = id => document.getElementById(id);
+  const seg = (id, value, pick) => {
+    const el = $(id); if (!el) return;
+    for (const b of el.children) { b.classList.toggle('on', b.dataset.v === String(value)); b.onclick = () => pick(b.dataset.v); }
+  };
+  seg('orient', state.orient, v => cmd('settings', { orient: v }));
+  seg('fit', state.fit, v => cmd('settings', { fit: v }));
+  seg('audio', state.audio, v => cmd('settings', { audio: v }));
+  seg('loop', state.loop ? 1 : 0, v => cmd('settings', { loop: v === '1' }));
+  if ($('rows')) { $('rows').value = state.rows; $('cols').value = state.cols; }
+  if ($('gap') && document.activeElement !== $('gap')) { $('gap').value = state.gap; $('gapOut').textContent = state.gap + 'px'; }
+  if ($('video')) {
+    $('video').innerHTML = videos.map(f => `<option value="${esc(f.src)}" ${f.src === state.video ? 'selected' : ''}>${esc(f.name)}</option>`).join('')
+      || '<option>No videos yet: upload one</option>';
+  }
+  const p = $('presets');
+  if (p) {
+    p.innerHTML = '';
+    for (const pr of PRESETS) {
+      const b = document.createElement('button');
+      b.className = 'btn preset' + (state.orient === 'landscape' ? ' land' : '') + (state.rows === pr.r && state.cols === pr.c ? ' on' : '');
+      const cell = state.orient === 'landscape' ? 22 : 11;
+      b.innerHTML = `<span class="mini" style="grid-template-columns:repeat(${pr.c},${cell}px)">${'<i></i>'.repeat(pr.r * pr.c)}</span>${pr.name}`;
+      b.onclick = () => cmd('layout', { rows: pr.r, cols: pr.c });
+      p.appendChild(b);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Wall preview: the video drawn 1-bit (ordered Bayer dither) with the tiles on top.
+// ---------------------------------------------------------------------------
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => ((v + 0.5) / 16) * 255);
+const PAPER = [242, 238, 227], INK = [18, 18, 18];
+
+export class WallView {
+  constructor(el, { video, onPick, pixel = 2, maxHeight }) {
+    this.el = el; this.video = video; this.onPick = onPick; this.pixel = pixel;
+    this.maxHeight = maxHeight; // () => px. When set, the box height follows the wall's shape.
+    el.classList.add('wall');
+    this.frame = document.createElement('div'); this.frame.className = 'wall-frame';
+    this.canvas = document.createElement('canvas');
+    this.tiles = document.createElement('div');
+    this.frame.append(this.canvas, this.tiles);
+    el.append(this.frame);
+    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
+    this.last = 0;
+    new ResizeObserver(() => this.layout()).observe(el);
+    const loop = t => { if (t - this.last > 80 && this.el.offsetParent) { this.last = t; this.draw(); } requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+  }
+
+  update(state, screens, { myTile = -1, myId = null, fallback } = {}) {
+    Object.assign(this, { state, screens, myTile, myId, fallback });
+    this.layout();
+  }
+
+  layout() {
+    const { state, screens } = this;
+    if (!state) return;
+    const wall = this.wall = wallLayout(state, screens, this.fallback || defaultTile(state.orient));
+    if (this.maxHeight) {
+      const w = this.el.clientWidth;
+      if (w) this.el.style.height = Math.round(Math.min(this.maxHeight(), (w * wall.H) / wall.W)) + 'px';
+    }
+    const box = this.el.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const k = this.k = Math.min(box.width / wall.W, box.height / wall.H);
+    this.frame.style.width = wall.W * k + 'px';
+    this.frame.style.height = wall.H * k + 'px';
+    this.canvas.width = Math.max(1, Math.round((wall.W * k) / this.pixel));
+    this.canvas.height = Math.max(1, Math.round((wall.H * k) / this.pixel));
+
+    this.tiles.innerHTML = '';
+    const n = state.rows * state.cols;
+    for (let i = 0; i < n; i++) {
+      const t = wall.tileRect(i);
+      const holder = screens.find(s => s.tile === i);
+      const mine = i === this.myTile;
+      const b = document.createElement(this.onPick ? 'button' : 'div');
+      b.className = 'wall-tile ' + (mine ? 'mine' : holder ? 'taken' : 'free');
+      Object.assign(b.style, { left: t.x * k + 'px', top: t.y * k + 'px', width: t.w * k + 'px', height: t.h * k + 'px' });
+      const status = mine ? 'you' : holder ? 'taken' : 'free';
+      b.innerHTML = `<span class="tag">${i + 1}<small>${status}</small></span>`;
+      if (this.onPick) { b.type = 'button'; b.onclick = () => this.onPick(i); b.setAttribute('aria-label', `Screen ${i + 1}, ${status}`); }
+      this.tiles.appendChild(b);
+    }
+    if (state.gap > 0) {
+      for (let c = 1; c < state.cols; c++) {
+        const t = wall.tileRect(c), g = document.createElement('div'); g.className = 'wall-gap';
+        Object.assign(g.style, { left: (t.x - state.gap) * k + 'px', top: 0, width: state.gap * k + 'px', height: '100%' });
+        this.tiles.appendChild(g);
+      }
+      for (let r = 1; r < state.rows; r++) {
+        const t = wall.tileRect(r * state.cols), g = document.createElement('div'); g.className = 'wall-gap';
+        Object.assign(g.style, { top: (t.y - state.gap) * k + 'px', left: 0, height: state.gap * k + 'px', width: '100%' });
+        this.tiles.appendChild(g);
+      }
+    }
+    this.draw();
+  }
+
+  draw() {
+    const { ctx, canvas, video: v, wall, state } = this;
+    if (!wall) return;
+    const W = canvas.width, H = canvas.height;
+    ctx.fillStyle = `rgb(${PAPER})`;
+    ctx.fillRect(0, 0, W, H);
+    if (!(v.readyState >= 2 && v.videoWidth)) return;
+    const s = (this.k / this.pixel);
+    const r = videoRect(wall, v.videoWidth, v.videoHeight, state.fit);
+    ctx.drawImage(v, r.x * s, r.y * s, r.w * s, r.h * s);
+    let img;
+    try { img = ctx.getImageData(0, 0, W, H); } catch { return; }
+    const d = img.data;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        // luminance, slightly contrast-boosted
+        let l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+        l = (l - 128) * 1.25 + 140;
+        const c = l > BAYER[(y & 3) * 4 + (x & 3)] ? PAPER : INK;
+        d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+}

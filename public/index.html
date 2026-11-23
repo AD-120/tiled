@@ -1,238 +1,427 @@
 <!doctype html>
-<html lang="he" dir="rtl">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#f2eee3">
 <link rel="manifest" href="manifest.webmanifest">
-<title>Tiled · מסך</title>
+<title>Tiled</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <style>
-  html, body { height: 100%; overflow: hidden; background: #000; overscroll-behavior: none; touch-action: manipulation; }
-  #stage { position: fixed; inset: 0; overflow: hidden; background: #000; }
-  #stage video { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; }
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; touch-action: manipulation; }
+  body { background: #000; }
 
-  #join { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-          gap: 22px; padding: 24px; background: var(--bg); z-index: 10; text-align: center; }
-  #join h1 { margin: 0; font-size: 28px; letter-spacing: -0.02em; }
-  #join p { margin: 0; color: var(--muted); max-width: 320px; line-height: 1.5; }
-  .picker { direction: ltr; display: grid; gap: 8px; width: min(78vw, 300px); }
-  .picker button { aspect-ratio: 9 / 16; border-radius: 12px; border: 1.5px solid var(--line); background: var(--panel);
-                   color: var(--fg); font: 600 22px/1 var(--font); cursor: pointer; position: relative; }
-  .picker.landscape button { aspect-ratio: 16 / 9; }
-  .picker button.taken { color: var(--muted); border-style: dashed; }
-  .picker button.mine { background: var(--accent); border-color: var(--accent); color: #000; }
-  .picker button small { position: absolute; bottom: 8px; inset-inline: 0; font-size: 11px; font-weight: 500; }
+  /* ----- the screen (video slice), rotatable when phones lie sideways ----- */
+  #screen { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; height: 100dvh; overflow: hidden;
+            background: #000; transform-origin: 0 0; }
+  #stage { position: absolute; inset: 0; overflow: hidden; }
+  #stage video { position: absolute; left: 0; top: 0; pointer-events: none; }
 
-  #hud { position: fixed; inset: auto 12px calc(12px + env(safe-area-inset-bottom)); z-index: 5; display: none;
-         background: rgba(20,20,22,.88); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-         border: 1px solid rgba(255,255,255,.1); border-radius: 16px; padding: 14px; color: #fff; }
-  #hud.show { display: block; }
-  #hud .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
-  #hud .stat { font: 12px/1.4 var(--mono); color: #aaa; direction: ltr; }
+  #pausedBadge { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: none; z-index: 3; }
+  #pausedBadge.show { display: inline-flex; }
+  #pausedBadge:active { transform: translate(calc(-50% + 3px), calc(-50% + 3px)); }
 
-  #ident { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; z-index: 6;
-           font: 800 38vmin/1 var(--font); color: #fff; background: rgba(0,0,0,.55); text-shadow: 0 4px 30px #000; }
+  #hud { position: absolute; left: 12px; right: 18px; bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 5;
+         display: none; gap: 12px; max-width: 560px; margin: 0 auto; }
+  #hud.show { display: grid; }
+  #hud::after { display: none; }            /* own stacking context: use a solid shadow instead */
+  #hud { box-shadow: 6px 6px 0 var(--ink); }
+  .hud-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .hud-top .label { margin: 0; }
+  #stat { font-size: 10px; color: #555; }
+  .transport { display: flex; align-items: center; gap: 10px; }
+  .transport input { flex: 1; }
+  .time { font: 700 11px var(--mono); min-width: 74px; text-align: right; }
+  .hud-btns { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+  .hud-btns .btn { min-height: 38px; font-size: 10px; padding: 8px 6px; }
+
+  #ident { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; z-index: 6;
+           background: var(--d50); }
   #ident.show { display: flex; }
-  #roomForm { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
-  #roomInput { width: 170px; background: var(--panel); color: var(--fg); border: 1.5px solid var(--line); border-radius: 12px;
-               padding: 12px; font: 600 22px var(--mono); text-align: center; letter-spacing: .15em; text-transform: uppercase; }
-  #roomErr { width: 100%; color: var(--warn); font-size: 14px; min-height: 1em; }
-  #roomTag { font: 13px var(--mono); color: var(--muted); }
-  #offline { position: fixed; top: calc(10px + env(safe-area-inset-top)); inset-inline: 0; margin: auto; width: max-content;
-             z-index: 7; background: #b3261e; color: #fff; padding: 6px 12px; border-radius: 99px; font-size: 13px; display: none; }
+  #ident b { font: 400 min(42vmin, 260px)/1 var(--display); color: var(--pink); text-shadow: 6px 6px 0 var(--cyan);
+             background: var(--paper); border: var(--line); padding: 0.06em 0.18em 0; box-shadow: 8px 8px 0 var(--ink); }
+
+  /* ----- paper pages ----- */
+  .page { position: fixed; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; z-index: 10; display: none;
+          background: var(--paper) var(--grain); }
+  .page.show { display: block; }
+  .wrap { max-width: 520px; margin: 0 auto; padding: calc(20px + env(safe-area-inset-top)) 16px 32px; display: grid; gap: 22px; }
+
+  /* home */
+  .home-top p { margin: 14px 0 0; font-size: 15px; max-width: 30ch; }
+  .hero { display: flex; gap: 10px; align-items: flex-end; height: 150px; }
+  .hero i { flex: 1; height: 100%; border: var(--line); border-radius: 10px; position: relative; overflow: hidden; }
+  .hero i::after { content: ""; position: absolute; inset: 0; background: var(--d25); }
+  .hero i:nth-child(1) { background: var(--pink); height: 86%; }
+  .hero i:nth-child(2) { background: var(--yellow); }
+  .hero i:nth-child(2)::after { background: var(--d12); }
+  .hero i:nth-child(3) { background: var(--cyan); height: 92%; }
+  .hero i:nth-child(3)::after { background: var(--d50); opacity: .55; }
+  .or { display: flex; align-items: center; gap: 10px; font: 700 11px var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+  .or::before, .or::after { content: ""; flex: 1; height: 0; border-top: var(--line); }
+  .join-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
+  .err { color: #c0006a; font-weight: 700; margin: -8px 0 0; min-height: 1.5em; }
+  .steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; counter-reset: s; }
+  .steps li { counter-increment: s; display: flex; gap: 10px; align-items: baseline; }
+  .steps li::before { content: counter(s); font: 400 11px/1 var(--display); background: var(--ink); color: var(--paper);
+                      padding: 4px 6px; }
+
+  /* lobby */
+  .topbar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 8px;
+            padding: calc(10px + env(safe-area-inset-top)) 16px 10px; background: var(--paper); border-bottom: var(--line); }
+  .topbar .logo { margin-inline-end: auto; }
+  #lobby .wrap { padding-top: 18px; padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
+  details.panel > summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+  details.panel > summary::-webkit-details-marker { display: none; }
+  details.panel > summary .label { margin: 0; }
+  details.panel > summary::after { content: "+"; font: 400 16px/1 var(--display); }
+  details.panel[open] > summary::after { content: "–"; }
+  .invite { display: grid; grid-template-columns: 132px 1fr; gap: 14px; margin-top: 14px; align-items: start; }
+  .big-code { font: 400 34px/1 var(--display); letter-spacing: .08em; color: var(--pink); text-shadow: 2px 2px 0 var(--cyan); }
+  .invite p { margin: 8px 0 10px; font-size: 12px; }
+  .lobby-wall { height: min(46vh, 380px); width: 100%; }
+  .stack { display: grid; gap: 14px; }
+  .dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; padding: 12px 16px calc(14px + env(safe-area-inset-bottom));
+          background: var(--paper); border-top: var(--line); }
+  .dock .btn { max-width: 488px; margin: 0 auto; display: flex; }
+
+  #offline { position: fixed; top: calc(10px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+             z-index: 30; display: none; }
 </style>
 </head>
 <body>
-<div id="stage"><video id="v" playsinline webkit-playsinline preload="auto"></video></div>
 
-<div id="join">
-  <h1>Tiled</h1>
-  <p>בחרו איזה חלק של התמונה הטלפון הזה יציג. אחר כך הניחו את הטלפונים צמודים לפי הסידור.</p>
-  <form id="roomForm" style="display:none">
-    <input id="roomInput" autocomplete="off" autocapitalize="characters" maxlength="8" placeholder="קוד חדר" dir="ltr">
-    <button class="btn primary" type="submit">הצטרף</button>
-    <div id="roomErr"></div>
-  </form>
-  <div id="roomTag"></div>
-  <div class="picker" id="picker"></div>
-  <button class="btn primary big" id="go">התחל</button>
-  <p style="font-size:13px">טיפ: באייפון, "הוסף למסך הבית" מסתיר את שורת הכתובת ונותן מסך מלא.</p>
-</div>
-
-<div id="hud">
-  <div class="row" style="margin-bottom:10px">
-    <strong id="hudTile"></strong>
-    <span class="stat" id="stat"></span>
-  </div>
-  <div class="row">
-    <button class="btn" id="changeTile">החלף מיקום</button>
-    <button class="btn" id="fs">מסך מלא</button>
-    <button class="btn" id="mute"></button>
+<div id="screen">
+  <div id="stage"><video id="v" playsinline webkit-playsinline preload="auto"></video></div>
+  <button class="btn yellow big" id="pausedBadge"><span class="ico">▶</span> Play</button>
+  <div id="ident"><b></b></div>
+  <div id="hud" class="panel">
+    <div class="hud-top"><span class="label" id="hudTile"></span><span id="stat"></span></div>
+    <div class="transport">
+      <button class="btn pink" id="playBtn">Play</button>
+      <input type="range" id="seek" min="0" max="1000" value="0" aria-label="Seek">
+      <span class="time" id="time">0:00</span>
+    </div>
+    <div class="hud-btns">
+      <button class="btn" id="restart">Restart</button>
+      <button class="btn" id="resync">Re-sync</button>
+      <button class="btn" id="numbers">Numbers</button>
+      <button class="btn" id="mute">Sound</button>
+      <button class="btn" id="flip">Rotate 180°</button>
+      <button class="btn" id="fs">Full screen</button>
+      <button class="btn yellow" id="toLobby">Lobby</button>
+    </div>
   </div>
 </div>
 
-<div id="ident"></div>
-<div id="offline">מתחבר מחדש…</div>
+<!-- HOME: start a wall or join one -->
+<section class="page" id="home">
+  <div class="wrap">
+    <div class="home-top">
+      <h1 class="logo">TILED</h1>
+      <p>One video, split across many phones. Line them up and they play as one picture.</p>
+    </div>
+    <div class="hero" aria-hidden="true"><i></i><i></i><i></i></div>
+    <button class="btn pink big block" id="create">Start a wall</button>
+    <div class="or">or join one</div>
+    <form class="join-row" id="joinForm">
+      <input class="input code-input" id="codeInput" maxlength="6" placeholder="CODE" autocomplete="off" autocapitalize="characters" aria-label="Room code">
+      <button class="btn yellow" type="submit">Join</button>
+    </form>
+    <p class="err" id="homeErr"></p>
+    <ol class="steps small">
+      <li>Start a wall on this phone.</li>
+      <li>Scan its QR code with the other phones.</li>
+      <li>Each phone picks its spot. Line them up and press play.</li>
+    </ol>
+    <a class="small" href="/control">Use a computer as the remote →</a>
+  </div>
+</section>
+
+<!-- LOBBY: invite, pick spot, layout, video -->
+<section class="page" id="lobby">
+  <header class="topbar">
+    <span class="logo sm">TILED</span>
+    <span class="chip y" id="roomChip"></span>
+    <span class="chip" id="count"></span>
+  </header>
+  <div class="wrap">
+    <details class="panel" id="invite">
+      <summary><span class="label">Invite phones</span></summary>
+      <div class="invite">
+        <img class="qr" id="qr" alt="QR code to join this wall">
+        <div>
+          <div class="big-code" id="bigCode"></div>
+          <p>Scan with the next phone's camera, or open <b id="host"></b> and type the code.</p>
+          <button class="btn cyan" id="share" type="button">Share link</button>
+        </div>
+      </div>
+    </details>
+
+    <section class="panel">
+      <h2 class="label">Your spot</h2>
+      <p class="small" style="margin:-4px 0 12px">Tap the tile where this phone sits on the wall.</p>
+      <div id="wall" class="lobby-wall"></div>
+    </section>
+
+    <section class="panel stack">
+      <h2 class="label" style="margin:0">Layout</h2>
+      <div class="field"><span>Phones are held</span>
+        <div class="seg" id="orient"><button data-v="portrait">▯ Portrait</button><button data-v="landscape">▭ Landscape</button></div>
+      </div>
+      <div class="presets" id="presets"></div>
+    </section>
+
+    <section class="panel stack">
+      <h2 class="label" style="margin:0">Video</h2>
+      <div class="field"><span>Playing</span><select class="input" id="video"></select></div>
+      <div class="field"><span>Upload your own <output id="upOut"></output></span>
+        <input type="file" id="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.m4v,.webm,.mov" hidden>
+        <button class="btn" id="uploadBtn" type="button">Choose file…</button>
+        <div class="bar" id="bar"><i></i></div>
+      </div>
+      <div class="field"><span>Fit</span>
+        <div class="seg" id="fit"><button data-v="cover">Fill wall</button><button data-v="contain">Show all</button></div>
+      </div>
+      <div class="field"><span>Sound from</span>
+        <div class="seg" id="audio"><button data-v="first">Screen 1</button><button data-v="all">All</button><button data-v="none">None</button></div>
+      </div>
+    </section>
+  </div>
+  <footer class="dock"><button class="btn pink big block" id="go">Enter screen ▸</button></footer>
+</section>
+
+<div class="chip p" id="offline">Reconnecting…</div>
 
 <script type="module">
-import { Link, SyncedVideo, wallLayout, videoRect } from './common.js';
+import { Link, SyncedVideo, wallLayout, videoRect, expectedPos, fmt, WallView, bindSettings, renderSettings } from './common.js';
 
 const $ = id => document.getElementById(id);
-const v = $('v');
-const room = (new URLSearchParams(location.search).get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch {} },
 };
-const tileKey = `tiled.tile.${room}`;
-const savedTile = parseInt(store.get(tileKey), 10);
-let myId = null, myTile = Number.isInteger(savedTile) ? savedTile : -1;
-let state = null, screens = [], joined = false, userMute = null;
+const params = new URLSearchParams(location.search);
+const room = (params.get('room') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const show = id => { for (const p of ['home', 'lobby']) $(p).classList.toggle('show', p === id); };
 
-const vp = () => ({ w: Math.round(window.innerWidth), h: Math.round(window.innerHeight) });
-
-// no room in the URL: ask for the code shown on the controller
-function askRoom(err = '') {
-  $('roomForm').style.display = 'flex';
-  $('picker').style.display = $('go').style.display = 'none';
-  $('join').querySelector('p').textContent = 'הקלידו את קוד החדר שמופיע בדף השליטה, או סרקו את ה-QR שם.';
-  $('roomErr').textContent = err;
-  $('roomInput').value = room;
-  $('roomInput').focus();
+// ---------- HOME ----------
+function goHome(err = '') {
+  show('home');
+  $('homeErr').textContent = err;
+  if (room) $('codeInput').value = room;
 }
-$('roomForm').onsubmit = e => {
+$('create').onclick = async () => {
+  $('create').disabled = true;
+  try {
+    const { code } = await fetch('api/room', { method: 'POST' }).then(r => r.json());
+    store.set(`tiled.host.${code}`, '1');
+    location.href = `/?room=${code}`;
+  } catch { $('homeErr').textContent = 'Could not reach the server. Try again.'; $('create').disabled = false; }
+};
+$('joinForm').onsubmit = e => {
   e.preventDefault();
-  const code = $('roomInput').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (code) location.search = `?room=${code}`;
+  const code = $('codeInput').value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code) location.href = `/?room=${code}`;
 };
-if (!room) { askRoom(); throw new Error('no room'); }
-$('roomTag').textContent = `חדר ${room}`;
 
-const link = new Link(() => ({ t: 'hello', role: 'screen', room, tile: myTile, ...vp() }));
-const sync = new SyncedVideo(v, link);
+if (!room) goHome();
+else startRoom();
 
-link.on('noroom', () => { link.stop(); askRoom('החדר לא נמצא. בדקו את הקוד בדף השליטה.'); });
-link.on('welcome', m => { myId = m.id; });
-link.on('open', () => { $('offline').style.display = 'none'; });
-link.on('close', () => { $('offline').style.display = 'block'; });
-link.on('identify', () => flashIdent());
+// ---------- ROOM ----------
+function startRoom() {
+  const v = $('v');
+  const isHost = store.get(`tiled.host.${room}`) === '1';
+  const tileKey = `tiled.tile.${room}`;
+  const saved = parseInt(store.get(tileKey), 10);
+  let myId = null, myTile = Number.isInteger(saved) ? saved : -1;
+  let state = null, screens = [], videos = [], joined = false, userMute = null, firstState = true;
+  let flip = store.get('tiled.flip') === '1';
 
-link.on('state', m => {
-  state = m.state; screens = m.screens;
-  const me = screens.find(s => s.id === myId);
-  if (me) { myTile = me.tile; store.set(tileKey, myTile); }
+  show('lobby');
+  $('roomChip').textContent = `Room ${room}`;
+  $('bigCode').textContent = room;
+  $('qr').src = `qr.svg?room=${room}`;
+  $('host').textContent = location.host;
+  let joinUrl = `${location.origin}/?room=${room}`;
+  fetch(`api/info?room=${room}`).then(r => r.json()).then(i => {
+    joinUrl = i.joinUrl;
+    $('host').textContent = i.base.replace(/^https?:\/\//, '');
+  }).catch(() => {});
 
-  const src = state.video || '';
-  if (src && !v.src.endsWith(src)) { v.src = src; v.load(); }
-
-  applyAudio();
-  renderPicker();
-  layout();
-  sync.setState(state);
-});
-
-v.addEventListener('loadedmetadata', () => {
-  link.send({ t: 'duration', video: state?.video, d: v.duration });
-  layout();
-});
-
-// ---------- layout: show only my slice of the wall ----------
-function layout() {
-  if (!state) return;
-  const wall = wallLayout(state, screens, vp());
-  const tile = wall.tileRect(Math.max(0, myTile));
-  const vr = videoRect(wall, v.videoWidth, v.videoHeight, state.fit);
-  // my viewport may be smaller than the cell; keep my slice anchored top-left of the cell
-  v.style.width = vr.w + 'px';
-  v.style.height = vr.h + 'px';
-  v.style.transform = `translate(${vr.x - tile.x}px, ${vr.y - tile.y}px)`;
-  $('hudTile').textContent = `מסך ${myTile + 1} מתוך ${state.rows * state.cols}`;
-}
-
-let rT;
-addEventListener('resize', () => {
-  clearTimeout(rT);
-  rT = setTimeout(() => { link.send({ t: 'viewport', ...vp() }); layout(); }, 150);
-});
-
-// ---------- tile picker ----------
-function renderPicker() {
-  const p = $('picker');
-  const { rows, cols } = state;
-  p.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-  p.style.width = `min(78vw, ${Math.min(300, cols * 110)}px)`;
-  p.classList.toggle('landscape', innerWidth > innerHeight);
-  p.innerHTML = '';
-  for (let i = 0; i < rows * cols; i++) {
-    const b = document.createElement('button');
-    b.textContent = i + 1;
-    const holder = screens.find(s => s.tile === i);
-    if (i === myTile) { b.className = 'mine'; b.innerHTML += '<small>הטלפון הזה</small>'; }
-    else if (holder) { b.className = 'taken'; b.innerHTML += '<small>תפוס · החלפה</small>'; }
-    b.onclick = () => { myTile = i; link.send({ t: 'setTile', tile: i }); };
-    p.appendChild(b);
+  // Effective tile size. If the room says "landscape" but this phone reports portrait
+  // (rotation lock), we draw the picture rotated 90°.
+  function geometry() {
+    const w = innerWidth, h = innerHeight;
+    const rotate = !!state && (state.orient === 'landscape') !== (w > h);
+    return rotate ? { w: h, h: w, rotate } : { w, h, rotate };
   }
-}
+  function applyRotation(g) {
+    const s = $('screen').style;
+    if (g.rotate) {
+      s.width = g.w + 'px'; s.height = g.h + 'px';
+      s.transform = flip ? `translateY(${innerHeight}px) rotate(-90deg)` : `translateX(${innerWidth}px) rotate(90deg)`;
+    } else {
+      s.width = ''; s.height = '';
+      s.transform = flip ? `translate(${innerWidth}px, ${innerHeight}px) rotate(180deg)` : '';
+    }
+  }
 
-// ---------- start (user gesture unlocks playback + sound) ----------
-$('go').onclick = async () => {
-  joined = true;
-  $('join').style.display = 'none';
-  applyAudio();
-  try { await v.play(); if (!state?.playing) v.pause(); } catch {}
-  enterFullscreen();
-  keepAwake();
-  sync.tick(true);
-  flashIdent();
-};
+  const link = new Link(() => ({ t: 'hello', role: 'screen', room, tile: myTile, w: geometry().w, h: geometry().h }));
+  const sync = new SyncedVideo(v, link);
+  const cmd = (action, extra = {}) => link.send({ t: 'cmd', action, ...extra });
+  const wallView = new WallView($('wall'), { video: v, maxHeight: () => Math.min(innerHeight * 0.46, 380), onPick: i => { myTile = i; link.send({ t: 'setTile', tile: i }); } });
+  bindSettings({ cmd, room, getState: () => state });
 
-function shouldSound() {
-  if (userMute != null) return !userMute;
-  if (!state) return false;
-  return state.audio === 'all' || (state.audio === 'first' && myTile === 0);
-}
-function applyAudio() {
-  v.muted = !joined || !shouldSound();
-  $('mute').textContent = v.muted ? 'הפעל צליל' : 'השתק';
-}
+  link.on('noroom', () => { link.stop(); goHome(`Room ${room} not found. Check the code.`); });
+  link.on('welcome', m => { myId = m.id; });
+  link.on('open', () => { $('offline').style.display = 'none'; });
+  link.on('close', () => { $('offline').style.display = 'block'; });
+  link.on('identify', () => flashIdent());
 
-// ---------- HUD ----------
-let hudT;
-$('stage').addEventListener('click', () => {
-  if (!joined) return;
-  $('hud').classList.add('show');
-  clearTimeout(hudT); hudT = setTimeout(() => $('hud').classList.remove('show'), 4000);
-});
-$('changeTile').onclick = () => { $('hud').classList.remove('show'); $('join').style.display = 'flex'; joined = false; applyAudio(); };
-$('fs').onclick = enterFullscreen;
-$('mute').onclick = () => { userMute = !v.muted; applyAudio(); if (v.paused && state?.playing) v.play().catch(() => {}); };
+  let lastSent = '';
+  function reportSize() {
+    const g = geometry();
+    const key = `${g.w}x${g.h}`;
+    if (key !== lastSent) { lastSent = key; link.send({ t: 'viewport', w: g.w, h: g.h }); }
+  }
 
-setInterval(() => {
-  if (!$('hud').classList.contains('show')) return;
-  $('stat').textContent = `drift ${(sync.drift * 1000).toFixed(0)}ms · rtt ${(link.rtt || 0).toFixed(0)}ms · ${v.playbackRate.toFixed(2)}x`;
-}, 250);
+  link.on('state', m => {
+    state = m.state; screens = m.screens; videos = m.videos;
+    const me = screens.find(s => s.id === myId);
+    if (me) { myTile = me.tile; store.set(tileKey, myTile); }
+    if (state.video && !v.src.endsWith(state.video)) { v.src = state.video; v.load(); }
 
-function flashIdent() {
-  const el = $('ident');
-  el.textContent = myTile + 1;
-  el.classList.add('show');
-  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 2500);
+    if (firstState) { firstState = false; $('invite').open = isHost || screens.length <= 1; }
+    $('count').textContent = `${screens.length} phone${screens.length === 1 ? '' : 's'}`;
+    renderSettings({ state, videos, cmd });
+    wallView.update(state, screens, { myTile, fallback: geometry() });
+    reportSize();
+    applyAudio();
+    layout();
+    sync.setState(state);
+    renderTransport();
+  });
+
+  v.addEventListener('loadedmetadata', () => { link.send({ t: 'duration', video: state?.video, d: v.duration }); layout(); wallView.layout(); });
+
+  // ---------- show only my slice of the wall ----------
+  function layout() {
+    if (!state) return;
+    const g = geometry();
+    applyRotation(g);
+    const wall = wallLayout(state, screens, g);
+    const tile = wall.tileRect(Math.max(0, myTile));
+    const vr = videoRect(wall, v.videoWidth, v.videoHeight, state.fit);
+    v.style.width = vr.w + 'px';
+    v.style.height = vr.h + 'px';
+    v.style.transform = `translate(${vr.x - tile.x}px, ${vr.y - tile.y}px)`;
+    $('hudTile').textContent = `Screen ${myTile + 1} / ${state.rows * state.cols}`;
+    $('ident').firstElementChild.textContent = myTile + 1;
+  }
+  let rT;
+  addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => { reportSize(); layout(); }, 150); });
+
+  // ---------- enter the wall (user gesture unlocks playback + sound) ----------
+  $('go').onclick = async () => {
+    joined = true;
+    show(null);
+    applyAudio();
+    try { await v.play(); if (!state?.playing) v.pause(); } catch {}
+    enterFullscreen();
+    keepAwake();
+    sync.tick(true);
+    flashIdent();
+    renderTransport();
+  };
+  $('toLobby').onclick = () => { hideHud(); joined = false; applyAudio(); show('lobby'); wallView.layout(); renderTransport(); };
+
+  // ---------- sound ----------
+  function shouldSound() {
+    if (userMute != null) return !userMute;
+    return !!state && (state.audio === 'all' || (state.audio === 'first' && myTile === 0));
+  }
+  function applyAudio() {
+    v.muted = !joined || !shouldSound();
+    $('mute').textContent = v.muted ? 'Sound on' : 'Mute';
+  }
+  $('mute').onclick = () => { userMute = !v.muted; applyAudio(); if (v.paused && state?.playing) v.play().catch(() => {}); };
+
+  // ---------- HUD ----------
+  let hudT;
+  const hideHud = () => { $('hud').classList.remove('show'); renderTransport(); };
+  const pokeHud = () => { clearTimeout(hudT); hudT = setTimeout(hideHud, 5000); };
+  $('stage').addEventListener('click', () => {
+    if (!joined) return;
+    if ($('hud').classList.toggle('show')) pokeHud();
+    renderTransport();
+  });
+  $('hud').addEventListener('pointerdown', pokeHud);
+
+  function renderTransport() {
+    if (!state) return;
+    $('playBtn').textContent = state.playing ? 'Pause' : 'Play';
+    $('pausedBadge').classList.toggle('show', joined && !state.playing && !$('hud').classList.contains('show'));
+  }
+  $('playBtn').onclick = () => cmd(state.playing ? 'pause' : 'play');
+  $('pausedBadge').onclick = e => { e.stopPropagation(); cmd('play'); };
+  $('restart').onclick = () => cmd('restart');
+  $('resync').onclick = () => cmd('resync');
+  $('numbers').onclick = () => cmd('identify');
+  $('fs').onclick = enterFullscreen;
+  $('flip').onclick = () => { flip = !flip; store.set('tiled.flip', flip ? '1' : '0'); layout(); };
+
+  let scrubbing = false;
+  $('seek').oninput = () => { scrubbing = true; };
+  $('seek').onchange = () => {
+    scrubbing = false;
+    const d = state.duration || v.duration;
+    if (d) cmd('seek', { pos: ($('seek').value / 1000) * d });
+  };
+  setInterval(() => {
+    if (!state || !$('hud').classList.contains('show')) return;
+    const d = state.duration || v.duration || 0;
+    const p = expectedPos(state, link.serverNow(), d);
+    $('time').textContent = `${fmt(p)}/${fmt(d)}`;
+    if (!scrubbing && d) $('seek').value = Math.round((p / d) * 1000);
+    $('stat').textContent = `drift ${(sync.drift * 1000).toFixed(0)}ms · rtt ${(link.rtt || 0).toFixed(0)}ms`;
+  }, 250);
+
+  function flashIdent() {
+    const el = $('ident');
+    el.classList.add('show');
+    clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 2500);
+  }
+
+  // ---------- invite ----------
+  $('share').onclick = async () => {
+    const url = joinUrl;
+    try {
+      if (navigator.share) await navigator.share({ title: 'Join my Tiled wall', url });
+      else { await navigator.clipboard.writeText(url); $('share').textContent = 'Link copied ✓'; }
+    } catch {}
+  };
 }
 
 function enterFullscreen() {
   const el = document.documentElement;
   const req = el.requestFullscreen || el.webkitRequestFullscreen;
-  if (req && !document.fullscreenElement) req.call(el).catch?.(() => {});
+  if (req && !document.fullscreenElement) { try { req.call(el)?.catch?.(() => {}); } catch {} }
 }
 
-// Wake Lock needs HTTPS; the playing video itself keeps most phones awake on plain HTTP.
+// Wake Lock works on HTTPS; elsewhere the playing video keeps most phones awake.
 async function keepAwake() {
-  try { if ('wakeLock' in navigator) { const l = await navigator.wakeLock.request('screen');
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); }, { once: true }); } } catch {}
+  try {
+    if (!('wakeLock' in navigator)) return;
+    await navigator.wakeLock.request('screen');
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); }, { once: true });
+  } catch {}
 }
 </script>
 </body>

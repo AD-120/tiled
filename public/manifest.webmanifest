@@ -3,6 +3,6 @@
   "short_name": "Tiled",
   "start_url": "/",
   "display": "fullscreen",
-  "background_color": "#000000",
+  "background_color": "#f2eee3",
   "theme_color": "#000000"
 }

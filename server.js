@@ -56,6 +56,7 @@ function createRoom(code = newCode()) {
       fit: 'cover',    // cover = fill the wall (crop), contain = whole video visible
       loop: true,
       audio: 'first',  // first | all | none
+      orient: 'portrait', // how phones are held: portrait | landscape
       playing: false,
       pos: 0,          // media time (s) valid at `at`
       at: now(),       // server time (ms)
@@ -159,6 +160,7 @@ function handleCommand(room, m) {
       if (m.fit === 'cover' || m.fit === 'contain') s.fit = m.fit;
       if (typeof m.loop === 'boolean') { s.pos = currentPos(s, t); s.at = t; s.loop = m.loop; }
       if (['first', 'all', 'none'].includes(m.audio)) s.audio = m.audio;
+      if (m.orient === 'portrait' || m.orient === 'landscape') s.orient = m.orient;
       break;
     case 'video':
       if (!videosOf(room).some(v => v.src === m.video)) return;
@@ -251,6 +253,12 @@ app.post('/api/upload', (req, res) => {
   req.pipe(out);
 });
 
+// A phone (or the desktop controller) opens a new room.
+app.post('/api/room', (_, res) => {
+  if (rooms.size >= 1000) return res.status(503).json({ error: 'too many rooms' });
+  res.json({ code: createRoom().code });
+});
+
 app.get('/healthz', (_, res) => res.send('ok'));
 
 const server = http.createServer(app);
@@ -327,8 +335,8 @@ wss.on('connection', ws => {
           room.state.duration = m.d; broadcastState(room);
         }
         return;
-      case 'cmd':
-        if (client.role === 'control') handleCommand(room, m);
+      case 'cmd': // anyone in the room (they have the code) can drive the wall
+        handleCommand(room, m);
         return;
     }
   });

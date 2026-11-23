@@ -4,11 +4,14 @@ Play one video across several phones at the same time. Each phone shows its own 
 
 ## Using it
 
-1. Open `/control` on a computer or a phone. This opens a new **room** with a short code and a QR code.
-2. On each phone, scan the QR code (or open the site and type the code). Pick a spot on the wall and tap **התחל**.
-3. From the control page, choose a layout (top/bottom, side by side, 2×2, …) and press play.
+1. On the first phone, open the site and tap **Start a wall**. It opens a room and shows a QR code and a short code.
+2. Every other phone scans that QR code (or opens the site → types the code → **Join**).
+3. In the lobby each phone taps its spot on the wall. Any phone can choose the layout, **Portrait / Landscape**, the video and the sound.
+4. Tap **Enter screen**, line the phones up, press **Play**. Tap any screen for controls.
 
-From the control page you can also seek, re-sync, flash numbers on the screens, set bezel compensation, fit mode and sound, and upload your own video. Uploads can be up to 200MB and are deleted when the room closes.
+**Landscape:** if a phone has rotation lock on, the picture rotates 90° by itself so it is still upright when the phone lies sideways. If it comes out upside down, use **Rotate 180°** in that phone's controls.
+
+Optional: open `/control` on a computer for a bigger remote with a live preview of the wall.
 
 ## Run locally
 
@@ -36,6 +39,10 @@ Optional environment variables: `PORT`, `MAX_UPLOAD_MB` (default 200), `UPLOAD_D
 - Each device measures its clock offset to the server with ping/pong and keeps the lowest-latency samples.
 - The server only stores "media time `pos` at server time `at`, playing or paused". Every play or seek is scheduled about 0.7 s ahead, so all phones start together.
 - Each phone checks itself every 150 ms. A large drift (>350 ms) triggers a seek, and the phone learns its own seek delay. A small drift is fixed by nudging `playbackRate` between 0.85 and 1.15.
+
+## Design
+
+1-bit dither × risograph: paper, thin black lines, fluorescent pink / yellow / cyan, and greys only as dither patterns. The wall preview is the live video, ordered-dithered to 1-bit.
 
 ## Tips
 
