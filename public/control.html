@@ -73,6 +73,12 @@
     </section>
 
     <section class="panel stack">
+      <h2 class="label" style="margin:0">Show</h2>
+      <div class="seg" data-seg="mode"><button data-v="video">▶ Video</button><button data-v="dancers">♪ Dancers</button></div>
+      <button class="btn" data-scatter type="button">Scatter dancers</button>
+    </section>
+
+    <section class="panel stack">
       <h2 class="label" style="margin:0">Layout</h2>
       <div class="field"><span>Phones are held</span>
         <div class="seg" id="orient"><button data-v="portrait">▯ Portrait</button><button data-v="landscape">▭ Landscape</button></div>
@@ -118,7 +124,7 @@ const room = (new URLSearchParams(location.search).get('room') || '').toUpperCas
 if (!room) location.replace('/control');
 
 const pv = $('pv');
-let state = null, screens = [], videos = [];
+let state = null, screens = [], videos = [], items = [];
 
 const link = new Link(() => ({ t: 'hello', role: 'control', room }));
 const sync = new SyncedVideo(pv, link);
@@ -137,12 +143,15 @@ link.on('close', () => { $('conn').textContent = 'Reconnecting…'; $('conn').cl
 
 link.on('state', m => {
   state = m.state; screens = m.screens; videos = m.videos;
+  items.length = 0; items.push(...(m.items || []).map(i => ({ ...i })));
   if (state.video && !pv.src.endsWith(state.video)) { pv.src = state.video; pv.load(); }
   sync.setState(state);
   render();
 });
 pv.addEventListener('loadedmetadata', () => { link.send({ t: 'duration', video: state?.video, d: pv.duration }); wallView.layout(); });
 
+link.on('item', m => { const cur = items.find(i => i.id === m.item.id); if (cur) Object.assign(cur, m.item); });
+document.querySelector('[data-scatter]').onclick = () => cmd('scatter');
 $('playBtn').onclick = () => cmd(state.playing ? 'pause' : 'play');
 $('restart').onclick = () => cmd('restart');
 $('resync').onclick = () => cmd('resync');
@@ -165,7 +174,7 @@ setInterval(() => {
 function render() {
   $('playBtn').textContent = state.playing ? 'Pause' : 'Play';
   renderSettings({ state, videos, cmd });
-  wallView.update(state, screens);
+  wallView.update(state, screens, { items, now: () => link.serverNow() });
   const n = state.rows * state.cols;
   $('count').textContent = `${screens.length}/${n} phones`;
   $('screens').innerHTML = [...screens].sort((a, b) => a.tile - b.tile)

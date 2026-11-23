@@ -199,6 +199,39 @@ export const fmt = s => {
 };
 
 // ---------------------------------------------------------------------------
+// Dancers: items on the wall. Position is (u, v) in 0..1 for the item's centre,
+// mapped so the item always stays fully on the wall. A throw decays with friction
+// and bounces off the edges; every client computes the same path from (u, v, vu, vv, t).
+// ---------------------------------------------------------------------------
+export const DANCER = 180;      // on-wall size in CSS px
+const FRICTION = 2.4;           // 1/s
+
+const fold = x => { const y = ((x % 2) + 2) % 2; return y > 1 ? 2 - y : y; };
+
+export function itemUV(it, now) {
+  const dt = Math.max(0, (now - it.t) / 1000);
+  const f = (1 - Math.exp(-FRICTION * dt)) / FRICTION;
+  return { u: fold(it.u + it.vu * f), v: fold(it.v + it.vv * f) };
+}
+
+// wall px <-> uv
+export function uvToPx(wall, u, v, size = DANCER) {
+  const rx = Math.max(0, wall.W - size), ry = Math.max(0, wall.H - size);
+  return { x: size / 2 + u * rx, y: size / 2 + v * ry };
+}
+export function pxToUv(wall, x, y, size = DANCER) {
+  const rx = Math.max(1, wall.W - size), ry = Math.max(1, wall.H - size);
+  return { u: Math.max(0, Math.min(1, (x - size / 2) / rx)), v: Math.max(0, Math.min(1, (y - size / 2) / ry)), rx, ry };
+}
+
+const imgCache = new Map();
+function cachedImg(src) {
+  let im = imgCache.get(src);
+  if (!im) { im = new Image(); im.src = src; imgCache.set(src, im); }
+  return im;
+}
+
+// ---------------------------------------------------------------------------
 // Shared UI pieces (phone lobby + desktop controller)
 // ---------------------------------------------------------------------------
 
@@ -264,6 +297,7 @@ export function renderSettings({ state, videos, cmd }) {
     }
   };
   seg('orient', state.orient, v => cmd('settings', { orient: v }));
+  seg('mode', state.mode, v => cmd('mode', { mode: v }));
   seg('fit', state.fit, v => cmd('settings', { fit: v }));
   seg('audio', state.audio, v => cmd('settings', { audio: v }));
   seg('loop', state.loop ? 1 : 0, v => cmd('settings', { loop: v === '1' }));
@@ -292,6 +326,7 @@ export function renderSettings({ state, videos, cmd }) {
 // Wall preview: the live video (full colour) with the tiles drawn on top.
 // ---------------------------------------------------------------------------
 const PAPER = 'rgb(242, 238, 227)';
+export const FLOOR = 90; // floor grid spacing, wall px
 
 export class WallView {
   constructor(el, { video, onPick, maxHeight }) {
@@ -310,8 +345,10 @@ export class WallView {
     requestAnimationFrame(loop);
   }
 
-  update(state, screens, { myTile = -1, myId = null, fallback } = {}) {
+  update(state, screens, { myTile = -1, myId = null, fallback, items, now } = {}) {
     Object.assign(this, { state, screens, myTile, myId, fallback });
+    if (items) this.items = items;
+    if (now) this.now = now;
     this.layout();
   }
 
@@ -367,9 +404,26 @@ export class WallView {
     if (!wall) return;
     ctx.fillStyle = PAPER;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (state.mode === 'dancers') return this.drawDancers();
     if (!(v.readyState >= 2 && v.videoWidth)) return;
     const r = videoRect(wall, v.videoWidth, v.videoHeight, state.fit);
     const s = this.scale;
     ctx.drawImage(v, r.x * s, r.y * s, r.w * s, r.h * s);
+  }
+
+  drawDancers() {
+    const { ctx, wall, scale: s } = this;
+    // floor grid, same as on the phones
+    ctx.strokeStyle = 'rgba(18,18,18,.18)'; ctx.lineWidth = 1;
+    for (let x = 0; x <= wall.W; x += FLOOR) { ctx.beginPath(); ctx.moveTo(x * s, 0); ctx.lineTo(x * s, wall.H * s); ctx.stroke(); }
+    for (let y = 0; y <= wall.H; y += FLOOR) { ctx.beginPath(); ctx.moveTo(0, y * s); ctx.lineTo(wall.W * s, y * s); ctx.stroke(); }
+    const now = this.now ? this.now() : Date.now();
+    ctx.imageSmoothingEnabled = false;
+    for (const it of [...(this.items || [])].sort((a, b) => a.z - b.z)) {
+      const { u, v } = itemUV(it, now);
+      const c = uvToPx(wall, u, v);
+      const im = cachedImg(it.src);
+      if (im.complete && im.naturalWidth) ctx.drawImage(im, (c.x - DANCER / 2) * s, (c.y - DANCER / 2) * s, DANCER * s, DANCER * s);
+    }
   }
 }

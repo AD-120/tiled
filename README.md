@@ -13,6 +13,13 @@ Play one video across several phones at the same time. Each phone shows its own 
 
 Optional: open `/control` on a computer for a bigger remote with a live preview of the wall.
 
+## Dancers mode
+
+Switch **Show → Dancers** (lobby, in-play menu or remote). The GIFs from the `GIFs/` folder are spread across all the screens on one continuous floor.
+Grab a dancer and drag it. Flick it to throw it: it glides (with friction, bouncing off the edges) onto the neighbouring phone.
+Every phone computes the same path from the throw, so it crosses between screens smoothly. **Scatter dancers** shuffles them.
+To add dancers, drop more `.gif` files into `GIFs/`.
+
 ## Run locally
 
 ```bash

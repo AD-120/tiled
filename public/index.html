@@ -20,8 +20,27 @@
   /* ----- the screen (video slice), rotatable when phones lie sideways ----- */
   #screen { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; height: 100dvh; overflow: hidden;
             background: #000; transform-origin: 0 0; }
-  #stage { position: absolute; inset: 0; overflow: hidden; }
+  #stage { position: absolute; inset: 0; overflow: hidden; z-index: 0; } /* own stacking context: dancers stay under the menu */
   #stage video { position: absolute; left: 0; top: 0; pointer-events: none; }
+
+  /* dancers floor: one continuous grid across all phones */
+  #floor { position: absolute; inset: 0; display: none; overflow: hidden; touch-action: none;
+           background-color: var(--paper);
+           background-image: linear-gradient(to right, rgba(18,18,18,.18) 1px, transparent 1px),
+                             linear-gradient(to bottom, rgba(18,18,18,.18) 1px, transparent 1px), var(--grain);
+           background-size: 90px 90px, 90px 90px, 6px 6px; }
+  body[data-mode="dancers"] #floor { display: block; }
+  body[data-mode="dancers"] #stage video { visibility: hidden; }
+  body[data-mode="dancers"] .video-only, body:not([data-mode="dancers"]) .dancers-only { display: none !important; }
+  .dancer { position: absolute; left: 0; top: 0; width: 180px; height: 180px; touch-action: none; user-select: none;
+            -webkit-user-select: none; -webkit-touch-callout: none; cursor: grab; will-change: transform; }
+  .dancer img { width: 100%; height: 100%; image-rendering: pixelated; pointer-events: none; -webkit-user-drag: none; display: block; }
+  .dancer.sel { outline: 2px dashed var(--pink); outline-offset: -2px; }
+  .dancer.held { cursor: grabbing; }
+  .dancer.held img { transform: scale(1.06); filter: drop-shadow(4px 4px 0 var(--cyan)); }
+  .dancer .tag { position: absolute; left: 0; top: 0; display: none; font: 400 10px/1 var(--display); text-transform: uppercase;
+                 background: var(--yellow); border: 1px solid var(--ink); padding: 4px 6px; white-space: nowrap; }
+  .dancer.sel .tag { display: block; }
 
   #pausedBadge { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: none; z-index: 3; }
   #pausedBadge.show { display: inline-flex; }
@@ -128,7 +147,7 @@
 <body>
 
 <div id="screen">
-  <div id="stage"><video id="v" playsinline webkit-playsinline preload="auto"></video></div>
+  <div id="stage"><video id="v" playsinline webkit-playsinline preload="auto"></video><div id="floor"></div></div>
   <button class="btn yellow big" id="pausedBadge"><span class="ico">▶</span> Play</button>
   <div id="ident"><b></b></div>
   <div id="hud" class="panel" role="dialog" aria-label="Controls">
@@ -138,7 +157,9 @@
     </div>
     <div class="hud-body">
       <div class="hud-col">
-        <div class="transport">
+        <div class="seg" data-seg="mode"><button data-v="video">▶ Video</button><button data-v="dancers">♪ Dancers</button></div>
+        <button class="btn dancers-only" data-scatter type="button">Scatter dancers</button>
+        <div class="transport video-only">
           <button class="btn pink" id="playBtn">Play</button>
           <input type="range" id="seek" min="0" max="1000" value="0" aria-label="Seek">
           <span class="time" id="time">0:00</span>
@@ -237,6 +258,13 @@
     </section>
 
     <section class="panel stack">
+      <h2 class="label" style="margin:0">Show</h2>
+      <div class="seg" data-seg="mode"><button data-v="video">▶ Video</button><button data-v="dancers">♪ Dancers</button></div>
+      <p class="small dancers-only" style="margin:0">Dancers are spread across the screens. Grab one and drag it. Flick it to throw it onto the next phone.</p>
+      <button class="btn dancers-only" data-scatter type="button">Scatter dancers</button>
+    </section>
+
+    <section class="panel stack video-only">
       <h2 class="label" style="margin:0">Video</h2>
       <div class="field"><span>Playing</span><select class="input" id="video"></select></div>
       <div class="field"><span>Upload your own <output id="upOut"></output></span>
@@ -258,7 +286,8 @@
 <div class="chip p" id="offline">Reconnecting…</div>
 
 <script type="module">
-import { Link, SyncedVideo, wallLayout, videoRect, expectedPos, fmt, WallView, bindSettings, renderSettings } from './common.js';
+import { Link, SyncedVideo, wallLayout, videoRect, expectedPos, fmt, WallView, bindSettings, renderSettings,
+         DANCER, itemUV, uvToPx, pxToUv } from './common.js';
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -301,6 +330,7 @@ function startRoom() {
   let myId = null, myTile = Number.isInteger(saved) ? saved : -1;
   let state = null, screens = [], videos = [], joined = false, userMute = null, firstState = true;
   let flip = store.get('tiled.flip') === '1';
+  let items = [], curWall = null, curTile = { x: 0, y: 0, w: 0, h: 0 };
 
   show('lobby');
   $('roomChip').textContent = `Room ${room}`;
@@ -363,6 +393,8 @@ function startRoom() {
 
   link.on('state', m => {
     state = m.state; screens = m.screens; videos = m.videos;
+    mergeItems(m.items || []);
+    document.body.dataset.mode = state.mode;
     const me = screens.find(s => s.id === myId);
     if (me) { myTile = me.tile; store.set(tileKey, myTile); }
     if (state.video && !v.src.endsWith(state.video)) { v.src = state.video; v.load(); }
@@ -371,8 +403,9 @@ function startRoom() {
     $('count').textContent = `${screens.length} phone${screens.length === 1 ? '' : 's'}`;
     renderSettings({ state, videos, cmd });
     document.querySelectorAll('.goBtn').forEach(b => (b.textContent = `Use this phone as screen ${myTile + 1} ▸`));
-    wallView.update(state, screens, { myTile, fallback: geometry() });
-    hudWall.update(state, screens, { myTile, fallback: geometry() });
+    const clock = () => link.serverNow();
+    wallView.update(state, screens, { myTile, fallback: geometry(), items, now: clock });
+    hudWall.update(state, screens, { myTile, fallback: geometry(), items, now: clock });
     reportSize();
     applyAudio();
     layout();
@@ -393,9 +426,135 @@ function startRoom() {
     v.style.width = vr.w + 'px';
     v.style.height = vr.h + 'px';
     v.style.transform = `translate(${vr.x - tile.x}px, ${vr.y - tile.y}px)`;
+    curWall = wall; curTile = tile;
+    // floor grid continues across phones: offset it by where my tile sits on the wall
+    $('floor').style.backgroundPosition = `${-tile.x}px ${-tile.y}px, ${-tile.x}px ${-tile.y}px, 0 0`;
     $('hudTile').textContent = `Screen ${myTile + 1} / ${state.rows * state.cols}`;
     $('ident').firstElementChild.textContent = myTile + 1;
   }
+  // ---------- dancers ----------
+  const els = new Map();   // id -> element
+  let drag = null;         // { id, pid, off, samples, u, v, lastSend }
+  let selected = null;
+
+  function mergeItems(list) {
+    // keep the same objects (previews hold the array); never overwrite the one I'm dragging
+    const byId = new Map(items.map(i => [i.id, i]));
+    const next = [];
+    for (const it of list) {
+      const cur = byId.get(it.id);
+      if (cur) { if (!(drag && drag.id === it.id)) Object.assign(cur, it); next.push(cur); }
+      else next.push({ ...it });
+    }
+    items.length = 0; items.push(...next);
+    for (const [id, el] of els) if (!items.some(i => i.id === id)) { el.remove(); els.delete(id); }
+  }
+  link.on('item', m => {
+    if (drag && drag.id === m.item.id) return;
+    const cur = items.find(i => i.id === m.item.id);
+    if (cur) Object.assign(cur, m.item); else items.push({ ...m.item });
+  });
+
+  // viewport point -> my (unrotated) screen coords -> wall coords
+  function toWall(e) {
+    const g = geometry(), X = e.clientX, Y = e.clientY;
+    let x, y;
+    if (g.rotate) { if (flip) { x = innerHeight - Y; y = X; } else { x = Y; y = innerWidth - X; } }
+    else if (flip) { x = innerWidth - X; y = innerHeight - Y; }
+    else { x = X; y = Y; }
+    return { x: x + curTile.x, y: y + curTile.y };
+  }
+
+  function elFor(it) {
+    let el = els.get(it.id);
+    if (el) return el;
+    el = document.createElement('div');
+    el.className = 'dancer';
+    el.innerHTML = `<img src="${it.src}" alt="" draggable="false"><span class="tag"></span>`;
+    el.querySelector('.tag').textContent = it.name || '';
+    el.addEventListener('pointerdown', e => grab(e, it.id));
+    el.addEventListener('click', e => e.stopPropagation()); // don't open the menu
+    $('floor').appendChild(el);
+    els.set(it.id, el);
+    return el;
+  }
+
+  function grab(e, id) {
+    if (!curWall || drag) return;
+    e.preventDefault(); e.stopPropagation();
+    const it = items.find(i => i.id === id);
+    if (!it) return;
+    const now = link.serverNow();
+    const { u, v } = itemUV(it, now);
+    const c = uvToPx(curWall, u, v);
+    const p = toWall(e);
+    drag = { id, pid: e.pointerId, off: { x: p.x - c.x, y: p.y - c.y }, samples: [{ t: performance.now(), ...c }], u, v, lastSend: 0 };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    it.u = u; it.v = v; it.vu = 0; it.vv = 0; it.t = now; it.z = Math.max(...items.map(i => i.z)) + 1;
+    selected = id;
+    link.send({ t: 'grab', id, u, v });
+  }
+
+  addEventListener('pointermove', e => {
+    if (!drag || e.pointerId !== drag.pid) return;
+    const p = toWall(e);
+    const cx = p.x - drag.off.x, cy = p.y - drag.off.y;
+    const uv = pxToUv(curWall, cx, cy);
+    drag.u = uv.u; drag.v = uv.v;
+    const c = uvToPx(curWall, uv.u, uv.v);
+    const t = performance.now();
+    drag.samples.push({ t, x: c.x, y: c.y });
+    while (drag.samples.length > 2 && t - drag.samples[0].t > 120) drag.samples.shift();
+    if (t - drag.lastSend > 35) { drag.lastSend = t; link.send({ t: 'drag', id: drag.id, u: uv.u, v: uv.v }); }
+  }, { passive: true });
+
+  function release(e) {
+    if (!drag || e.pointerId !== drag.pid) return;
+    const { id, u, v, samples } = drag;
+    // flick velocity from the last ~120ms, in wall px/s -> uv/s
+    let vu = 0, vv = 0;
+    const a = samples[0], b = samples[samples.length - 1];
+    const dt = (b.t - a.t) / 1000;
+    if (dt > 0.01 && performance.now() - b.t < 80) {
+      const { rx, ry } = pxToUv(curWall, 0, 0);
+      vu = (b.x - a.x) / dt / rx; vv = (b.y - a.y) / dt / ry;
+      const sp = Math.hypot((b.x - a.x) / dt, (b.y - a.y) / dt);
+      if (sp < 120) { vu = 0; vv = 0; } // a slow release is a drop, not a throw
+    }
+    const it = items.find(i => i.id === id);
+    Object.assign(it, { u, v, vu, vv, t: link.serverNow() });
+    drag = null;
+    link.send({ t: 'drop', id, u, v, vu, vv });
+  }
+  addEventListener('pointerup', release);
+  addEventListener('pointercancel', release);
+
+  // empty floor: tap clears the selection (and opens the menu as usual)
+  $('floor').addEventListener('pointerdown', e => { if (e.target === $('floor')) selected = null; });
+
+  (function renderDancers() {
+    requestAnimationFrame(renderDancers);
+    if (!state || state.mode !== 'dancers' || !curWall) return;
+    const now = link.serverNow();
+    for (const it of items) {
+      const el = elFor(it);
+      let u, v;
+      if (drag && drag.id === it.id) { u = drag.u; v = drag.v; }
+      else ({ u, v } = itemUV(it, now));
+      const c = uvToPx(curWall, u, v);
+      const x = c.x - DANCER / 2 - curTile.x, y = c.y - DANCER / 2 - curTile.y;
+      const visible = x < curTile.w && y < curTile.h && x + DANCER > 0 && y + DANCER > 0;
+      el.style.display = visible ? '' : 'none';
+      if (!visible) continue;
+      el.style.transform = `translate(${x}px, ${y}px)`;
+      el.style.zIndex = it.z;
+      el.classList.toggle('held', !!drag && drag.id === it.id);
+      el.classList.toggle('sel', selected === it.id);
+    }
+  })();
+
+  document.querySelectorAll('[data-scatter]').forEach(b => (b.onclick = () => cmd('scatter')));
+
   let rT;
   addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => { reportSize(); layout(); }, 150); });
 
@@ -443,7 +602,7 @@ function startRoom() {
   function renderTransport() {
     if (!state) return;
     $('playBtn').textContent = state.playing ? 'Pause' : 'Play';
-    $('pausedBadge').classList.toggle('show', joined && !state.playing && !$('hud').classList.contains('show'));
+    $('pausedBadge').classList.toggle('show', joined && state.mode !== 'dancers' && !state.playing && !$('hud').classList.contains('show'));
   }
   $('playBtn').onclick = () => cmd(state.playing ? 'pause' : 'play');
   $('pausedBadge').onclick = e => { e.stopPropagation(); cmd('play'); };

@@ -14,6 +14,7 @@ const QRCode = require('qrcode');
 const PORT = Number(process.env.PORT) || 8080;
 const PUBLIC = path.join(__dirname, 'public');
 const VIDEOS = path.join(PUBLIC, 'videos');
+const GIFS = path.join(__dirname, 'GIFs'); // drop .gif files here: they become dancers
 const UPLOADS = process.env.UPLOAD_DIR || path.join(os.tmpdir(), 'tiled-uploads');
 const MAX_UPLOAD = (Number(process.env.MAX_UPLOAD_MB) || 200) * 1024 * 1024;
 const ROOM_TTL_MS = 60 * 60 * 1000; // idle rooms (no one connected) are dropped after 1h
@@ -30,6 +31,40 @@ function builtinVideos() {
       .map(f => ({ name: f, src: `videos/${encodeURIComponent(f)}` }));
   } catch { return []; }
 }
+
+// ---------- dancers (GIFs) ----------
+function builtinGifs() {
+  try {
+    return fs.readdirSync(GIFS).filter(f => /\.gif$/i.test(f)).sort().map(f => ({
+      src: `gifs/${encodeURIComponent(f)}`,
+      name: f.replace(/^Idle_custom-/i, '').replace(/_south\.gif$|\.gif$/i, '').replace(/[_-]+/g, ' ')
+        .split(' ').slice(0, 3).join(' '),
+    }));
+  } catch { return []; }
+}
+
+// Items live in normalised wall coordinates (0..1 for the centre), so they stay on the
+// wall whatever the layout. Motion after a throw is computed by every client from
+// (u, v, vu, vv, t): no streaming needed.
+function scatter(room) {
+  const gifs = builtinGifs();
+  const n = gifs.length;
+  room.items = gifs.map((g, i) => ({
+    id: i + 1, src: g.src, name: g.name,
+    u: (i + 0.5) / n + (Math.random() - 0.5) * (0.6 / n),
+    v: 0.15 + Math.random() * 0.7,
+    vu: 0, vv: 0, t: now(), z: i + 1, owner: null,
+  }));
+  // shuffle u so neighbours are mixed across the screens
+  for (let i = room.items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [room.items[i].u, room.items[j].u] = [room.items[j].u, room.items[i].u];
+  }
+  room.zTop = n;
+}
+
+const clamp01 = x => Math.max(0, Math.min(1, Number(x) || 0));
+const clampV = x => Math.max(-6, Math.min(6, Number(x) || 0));
 
 // ---------- rooms ----------
 const rooms = new Map(); // code -> room
@@ -48,6 +83,7 @@ function createRoom(code = newCode()) {
     code,
     clients: new Map(), // id -> { ws, role, tile, w, h }
     uploads: [],        // [{ name, src, file }]
+    items: [], zTop: 0, // dancers
     lastSeen: now(),
     state: {
       video: first ? first.src : null,
@@ -57,12 +93,14 @@ function createRoom(code = newCode()) {
       loop: true,
       audio: 'first',  // first | all | none
       orient: 'portrait', // how phones are held: portrait | landscape
+      mode: 'video',   // video | dancers
       playing: false,
       pos: 0,          // media time (s) valid at `at`
       at: now(),       // server time (ms)
       duration: null,
     },
   };
+  scatter(room);
   rooms.set(code, room);
   return room;
 }
@@ -103,7 +141,8 @@ function broadcast(room, msg) {
   for (const c of room.clients.values()) if (c.ws.readyState === 1) c.ws.send(data);
 }
 const broadcastState = room => broadcast(room, {
-  t: 'state', room: room.code, state: room.state, screens: screensOf(room), videos: videosOf(room), serverNow: now(),
+  t: 'state', room: room.code, state: room.state, screens: screensOf(room), videos: videosOf(room),
+  items: room.items, serverNow: now(),
 });
 
 function freeTile(room) {
@@ -169,6 +208,14 @@ function handleCommand(room, m) {
     case 'identify':
       broadcast(room, { t: 'identify' });
       return;
+    case 'mode':
+      if (m.mode !== 'video' && m.mode !== 'dancers') return;
+      s.mode = m.mode;
+      if (s.mode === 'dancers' && s.playing) { s.pos = currentPos(s, t); s.at = t; s.playing = false; }
+      break;
+    case 'scatter':
+      scatter(room);
+      break;
     default:
       return;
   }
@@ -188,6 +235,7 @@ app.get('/control', (req, res) => {
 });
 
 app.use(express.static(PUBLIC, { maxAge: 0 }));
+app.use('/gifs', express.static(GIFS, { maxAge: '1h', index: false }));
 app.use('/uploads', express.static(UPLOADS, { maxAge: '1h', index: false }));
 
 function lanAddresses() {
@@ -335,6 +383,20 @@ wss.on('connection', ws => {
           room.state.duration = m.d; broadcastState(room);
         }
         return;
+      case 'grab': case 'drag': case 'drop': {
+        const it = room.items.find(i => i.id === m.id);
+        if (!it) return;
+        if (m.t === 'grab') {
+          if (it.owner && it.owner !== id && room.clients.has(it.owner)) return; // someone else holds it
+          it.owner = id; it.z = ++room.zTop;
+        } else if (it.owner !== id) return;
+        it.u = clamp01(m.u); it.v = clamp01(m.v); it.t = now();
+        it.vu = m.t === 'drop' ? clampV(m.vu) : 0;
+        it.vv = m.t === 'drop' ? clampV(m.vv) : 0;
+        if (m.t === 'drop') it.owner = null;
+        broadcast(room, { t: 'item', item: it, serverNow: it.t });
+        return;
+      }
       case 'cmd': // anyone in the room (they have the code) can drive the wall
         handleCommand(room, m);
         return;
@@ -345,6 +407,7 @@ wss.on('connection', ws => {
     if (!room) return;
     room.clients.delete(id);
     room.lastSeen = now();
+    for (const it of room.items) if (it.owner === id) { it.owner = null; it.vu = it.vv = 0; }
     broadcastState(room);
   });
 });
