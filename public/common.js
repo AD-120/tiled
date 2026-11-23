@@ -75,16 +75,23 @@ export class SyncedVideo {
     this.v = video; this.link = link;
     this.state = null; this.seeking = false; this.seekLead = 0.08;
     this.drift = 0;
+    this.offsetMs = 0;      // per-device fine-tune: + shows later frames (for a screen that looks late)
+    this.badSince = 0;      // when drift last went out of tolerance
     video.addEventListener('seeked', () => {
       this.seeking = false;
+      this.badSince = 0;
       // learn how long seeks take on this device so the next one lands closer
       if (this.seekTarget != null && this.state?.playing) {
-        const late = expectedPos(this.state, this.link.serverNow(), video.duration) - video.currentTime;
+        const late = this.target() - video.currentTime;
         this.seekLead = Math.max(0, Math.min(1, this.seekLead + late * 0.6));
       }
       this.seekTarget = null;
     });
     setInterval(() => this.tick(), 150);
+  }
+
+  target(t = this.link.serverNow()) {
+    return expectedPos(this.state, t + this.offsetMs, this.v.duration);
   }
 
   setState(state) {
@@ -93,21 +100,26 @@ export class SyncedVideo {
     if (changed) this.tick(true);
   }
 
+  setRate(r) {
+    // avoid poking playbackRate every tick: some browsers (iOS) stutter on each change
+    if (Math.abs(this.v.playbackRate - r) > 0.015 || (r === 1 && this.v.playbackRate !== 1)) this.v.playbackRate = r;
+  }
+
   tick(force) {
     const s = this.state, v = this.v;
     if (!s || !(v.readyState >= 1)) return;
     const t = this.link.serverNow();
-    const want = expectedPos(s, t, v.duration);
 
-    if (!s.playing || t < s.at) {
+    if (!s.playing || t + this.offsetMs < s.at) {
       // paused, or waiting for a scheduled start
       if (!v.paused) v.pause();
-      v.playbackRate = 1;
+      this.setRate(1);
       if (Math.abs(v.currentTime - s.pos) > 0.04 && !this.seeking) this.seek(s.pos);
-      this.drift = 0;
+      this.drift = 0; this.badSince = 0;
       return;
     }
 
+    const want = this.target(t);
     if (!s.loop && v.duration && want >= v.duration - 0.06) { if (!v.paused) v.pause(); return; }
 
     if (v.paused) { v.play().catch(() => {}); }
@@ -120,13 +132,20 @@ export class SyncedVideo {
       if (drift < -v.duration / 2) drift += v.duration;
     }
     this.drift = drift;
+    const ad = Math.abs(drift);
 
-    if (Math.abs(drift) > 0.35 || force && Math.abs(drift) > 0.1) {
+    // rate nudging that is not closing the gap (seen on iOS) falls back to a seek
+    if (ad > 0.06) { if (!this.badSince) this.badSince = performance.now(); }
+    else this.badSince = 0;
+    const stuck = this.badSince && performance.now() - this.badSince > 2200;
+
+    if (ad > 0.3 || (force && ad > 0.1) || stuck) {
+      this.badSince = 0;
       this.seek(want + this.seekLead);
-    } else if (Math.abs(drift) > 0.025) {
-      v.playbackRate = Math.max(0.85, Math.min(1.15, 1 - drift * 1.5));
+    } else if (ad > 0.02) {
+      this.setRate(Math.max(0.85, Math.min(1.15, 1 - drift * 2)));
     } else {
-      v.playbackRate = 1;
+      this.setRate(1);
     }
   }
 

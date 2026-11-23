@@ -46,6 +46,10 @@
   .time { font: 700 11px var(--mono); min-width: 74px; text-align: right; }
   .hud-btns { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
   .hud-btns .btn, .hud-side .seg button { min-height: 36px; font-size: 10px; padding: 8px 6px; }
+  .timing { display: grid; grid-template-columns: 1fr 40px 64px 40px; gap: 6px; align-items: center; }
+  .timing small { font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .timing .btn { min-height: 34px; padding: 0; font-size: 16px; }
+  .timing output { font: 700 12px var(--mono); text-align: center; border: var(--line); padding: 8px 0; background: var(--paper); }
   .hud-row { display: grid; grid-template-columns: minmax(84px, 38%) 1fr; gap: 12px; align-items: start; }
   .hud-wall { width: 100%; }
   .hud-side { display: grid; gap: 8px; align-content: start; }
@@ -147,6 +151,12 @@
           <button class="btn" id="flip">Rotate 180°</button>
           <button class="btn" id="fs">Full screen</button>
           <button class="btn yellow" id="toLobby">Lobby / invite</button>
+        </div>
+        <div class="timing">
+          <span class="hud-h">Fine-tune this phone<br><small>Looks late? press +</small></span>
+          <button class="btn" id="offMinus" aria-label="Show earlier frames">−</button>
+          <output id="offVal">0 ms</output>
+          <button class="btn" id="offPlus" aria-label="Show later frames">+</button>
         </div>
       </div>
       <div class="hud-col">
@@ -323,6 +333,14 @@ function startRoom() {
 
   const link = new Link(() => ({ t: 'hello', role: 'screen', room, tile: myTile, w: geometry().w, h: geometry().h }));
   const sync = new SyncedVideo(v, link);
+  // per-phone timing trim (kept on this phone across rooms)
+  sync.offsetMs = parseInt(store.get('tiled.offset'), 10) || 0;
+  const showOffset = () => { $('offVal').textContent = `${sync.offsetMs > 0 ? '+' : ''}${sync.offsetMs} ms`; };
+  const nudge = d => {
+    sync.offsetMs = Math.max(-500, Math.min(500, sync.offsetMs + d));
+    store.set('tiled.offset', sync.offsetMs); showOffset(); sync.tick(true);
+  };
+  showOffset();
   const cmd = (action, extra = {}) => link.send({ t: 'cmd', action, ...extra });
   const pickTile = i => { myTile = i; link.send({ t: 'setTile', tile: i }); };
   const wallView = new WallView($('wall'), { video: v, maxHeight: () => Math.min(innerHeight * 0.46, 380), onPick: pickTile });
@@ -418,6 +436,8 @@ function startRoom() {
   });
   $('hud').addEventListener('pointerdown', pokeHud);
   $('hud').addEventListener('scroll', pokeHud, { passive: true });
+  $('offMinus').onclick = () => nudge(-20);
+  $('offPlus').onclick = () => nudge(20);
   $('hudClose').onclick = () => { clearTimeout(hudT); hideHud(); };
 
   function renderTransport() {
