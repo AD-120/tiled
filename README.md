@@ -16,7 +16,7 @@ Optional: open `/control` on a computer for a bigger remote with a live preview 
 ## Dancers mode
 
 Switch **Show → Dancers** (lobby, in-play menu or remote). The GIFs from the `GIFs/` folder are spread across all the screens on one continuous floor.
-Grab a dancer and drag it. Flick it to throw it: it glides (with friction, bouncing off the edges) onto the neighbouring phone.
+Grab a dancer and drag it. **Drag it phone to phone:** pull it off the edge that touches the next phone; it waits there (flashing) and the next phone's touch near it picks it up under your finger, so you keep dragging. Flick it to throw it: it glides (with friction, bouncing off the edges) onto the neighbouring phone.
 Every phone computes the same path from the throw, so it crosses between screens smoothly. **Scatter dancers** shuffles them.
 To add dancers, drop more `.gif` files into `GIFs/`.
 

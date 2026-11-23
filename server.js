@@ -388,12 +388,17 @@ wss.on('connection', ws => {
         if (!it) return;
         if (m.t === 'grab') {
           if (it.owner && it.owner !== id && room.clients.has(it.owner)) return; // someone else holds it
-          it.owner = id; it.z = ++room.zTop;
+          it.owner = id; it.z = ++room.zTop; it.handoff = 0;
         } else if (it.owner !== id) return;
         it.u = clamp01(m.u); it.v = clamp01(m.v); it.t = now();
         it.vu = m.t === 'drop' ? clampV(m.vu) : 0;
         it.vv = m.t === 'drop' ? clampV(m.vv) : 0;
-        if (m.t === 'drop') it.owner = null;
+        if (m.t === 'drop') {
+          it.owner = null;
+          // dragged off the edge toward another phone: it waits there to be caught
+          it.handoff = m.handoff ? now() + 6000 : 0;
+          if (it.handoff) it.z = ++room.zTop;
+        }
         broadcast(room, { t: 'item', item: it, serverNow: it.t });
         return;
       }

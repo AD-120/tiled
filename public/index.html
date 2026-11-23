@@ -41,6 +41,8 @@
   .dancer .tag { position: absolute; left: 0; top: 0; display: none; font: 400 10px/1 var(--display); text-transform: uppercase;
                  background: var(--yellow); border: 1px solid var(--ink); padding: 4px 6px; white-space: nowrap; }
   .dancer.sel .tag { display: block; }
+  .dancer.waiting { outline: 3px solid var(--pink); outline-offset: -3px; animation: wait 0.6s steps(2) infinite; }
+  @keyframes wait { 50% { outline-color: var(--cyan); } }
 
   #pausedBadge { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: none; z-index: 3; }
   #pausedBadge.show { display: inline-flex; }
@@ -453,17 +455,17 @@ function startRoom() {
     if (drag && drag.id === m.item.id) return;
     const cur = items.find(i => i.id === m.item.id);
     if (cur) Object.assign(cur, m.item); else items.push({ ...m.item });
+    if (m.item.handoff) tryCatchPending();
   });
 
-  // viewport point -> my (unrotated) screen coords -> wall coords
-  function toWall(e) {
+  // viewport point -> my (unrotated) screen coords
+  function toLocal(e) {
     const g = geometry(), X = e.clientX, Y = e.clientY;
-    let x, y;
-    if (g.rotate) { if (flip) { x = innerHeight - Y; y = X; } else { x = Y; y = innerWidth - X; } }
-    else if (flip) { x = innerWidth - X; y = innerHeight - Y; }
-    else { x = X; y = Y; }
-    return { x: x + curTile.x, y: y + curTile.y };
+    if (g.rotate) return flip ? { x: innerHeight - Y, y: X } : { x: Y, y: innerWidth - X };
+    if (flip) return { x: innerWidth - X, y: innerHeight - Y };
+    return { x: X, y: Y };
   }
+  const toWall = e => { const l = toLocal(e); return { x: l.x + curTile.x, y: l.y + curTile.y }; };
 
   function elFor(it) {
     let el = els.get(it.id);
@@ -472,34 +474,39 @@ function startRoom() {
     el.className = 'dancer';
     el.innerHTML = `<img src="${it.src}" alt="" draggable="false"><span class="tag"></span>`;
     el.querySelector('.tag').textContent = it.name || '';
-    el.addEventListener('pointerdown', e => grab(e, it.id));
+    el.addEventListener('pointerdown', e => {
+      if (!curWall || drag) return;
+      e.preventDefault(); e.stopPropagation();
+      grabAt(it.id, e.pointerId, toWall(e), false, e.currentTarget);
+    });
     el.addEventListener('click', e => e.stopPropagation()); // don't open the menu
     $('floor').appendChild(el);
     els.set(it.id, el);
     return el;
   }
 
-  function grab(e, id) {
-    if (!curWall || drag) return;
-    e.preventDefault(); e.stopPropagation();
+  // snap = the dancer jumps under the finger (catching a hand-off from another phone)
+  function grabAt(id, pointerId, p, snap, captureEl) {
     const it = items.find(i => i.id === id);
     if (!it) return;
     const now = link.serverNow();
-    const { u, v } = itemUV(it, now);
+    const { u, v } = snap ? pxToUv(curWall, p.x, p.y) : itemUV(it, now);
     const c = uvToPx(curWall, u, v);
-    const p = toWall(e);
-    drag = { id, pid: e.pointerId, off: { x: p.x - c.x, y: p.y - c.y }, samples: [{ t: performance.now(), ...c }], u, v, lastSend: 0 };
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
-    it.u = u; it.v = v; it.vu = 0; it.vv = 0; it.t = now; it.z = Math.max(...items.map(i => i.z)) + 1;
+    drag = { id, pid: pointerId, off: snap ? { x: 0, y: 0 } : { x: p.x - c.x, y: p.y - c.y },
+             samples: [{ t: performance.now(), ...c }], u, v, lastSend: 0, local: null };
+    try { captureEl?.setPointerCapture(pointerId); } catch {}
+    Object.assign(it, { u, v, vu: 0, vv: 0, t: now, handoff: 0, z: Math.max(...items.map(i => i.z)) + 1 });
     selected = id;
     link.send({ t: 'grab', id, u, v });
+    link.send({ t: 'drag', id, u, v });
   }
 
   addEventListener('pointermove', e => {
+    if (pending && e.pointerId === pending.pid) { pending.p = toWall(e); return; }
     if (!drag || e.pointerId !== drag.pid) return;
+    drag.local = toLocal(e);
     const p = toWall(e);
-    const cx = p.x - drag.off.x, cy = p.y - drag.off.y;
-    const uv = pxToUv(curWall, cx, cy);
+    const uv = pxToUv(curWall, p.x - drag.off.x, p.y - drag.off.y);
     drag.u = uv.u; drag.v = uv.v;
     const c = uvToPx(curWall, uv.u, uv.v);
     const t = performance.now();
@@ -508,29 +515,84 @@ function startRoom() {
     if (t - drag.lastSend > 35) { drag.lastSend = t; link.send({ t: 'drag', id: drag.id, u: uv.u, v: uv.v }); }
   }, { passive: true });
 
+  // Finger left my screen through an edge that faces another phone?
+  // Returns the wall point just across that edge where the dancer should wait.
+  const EDGE = 44;
+  function handoffPoint(local, wallPt) {
+    if (!local) return null;
+    const g = geometry(), gap = state.gap || 0, half = DANCER / 2 + 4;
+    const right = curTile.x + curTile.w, bottom = curTile.y + curTile.h;
+    const cand = [];
+    if (local.x >= g.w - EDGE && right + 1 < curWall.W) cand.push({ d: g.w - local.x, x: right + gap + half, y: wallPt.y });
+    if (local.x <= EDGE && curTile.x > 1) cand.push({ d: local.x, x: curTile.x - gap - half, y: wallPt.y });
+    if (local.y >= g.h - EDGE && bottom + 1 < curWall.H) cand.push({ d: g.h - local.y, x: wallPt.x, y: bottom + gap + half });
+    if (local.y <= EDGE && curTile.y > 1) cand.push({ d: local.y, x: wallPt.x, y: curTile.y - gap - half });
+    cand.sort((a, b) => a.d - b.d);
+    return cand[0] || null;
+  }
+
   function release(e) {
+    if (pending && e.pointerId === pending.pid) { pending = null; return; }
     if (!drag || e.pointerId !== drag.pid) return;
-    const { id, u, v, samples } = drag;
-    // flick velocity from the last ~120ms, in wall px/s -> uv/s
-    let vu = 0, vv = 0;
-    const a = samples[0], b = samples[samples.length - 1];
-    const dt = (b.t - a.t) / 1000;
-    if (dt > 0.01 && performance.now() - b.t < 80) {
-      const { rx, ry } = pxToUv(curWall, 0, 0);
-      vu = (b.x - a.x) / dt / rx; vv = (b.y - a.y) / dt / ry;
-      const sp = Math.hypot((b.x - a.x) / dt, (b.y - a.y) / dt);
-      if (sp < 120) { vu = 0; vv = 0; } // a slow release is a drop, not a throw
+    const { id, samples } = drag;
+    let { u, v } = drag;
+    let vu = 0, vv = 0, handoff = false;
+    const local = drag.local || (e.clientX || e.clientY ? toLocal(e) : null);
+    const hp = local && handoffPoint(local, { x: local.x + curTile.x, y: local.y + curTile.y });
+    if (hp) {
+      // pass the dancer over to the neighbouring phone, where the finger lands next
+      ({ u, v } = pxToUv(curWall, hp.x, hp.y));
+      handoff = true;
+    } else {
+      // flick velocity from the last ~120ms, in wall px/s -> uv/s
+      const a = samples[0], b = samples[samples.length - 1];
+      const dt = (b.t - a.t) / 1000;
+      if (dt > 0.01 && performance.now() - b.t < 80) {
+        const { rx, ry } = pxToUv(curWall, 0, 0);
+        vu = (b.x - a.x) / dt / rx; vv = (b.y - a.y) / dt / ry;
+        if (Math.hypot((b.x - a.x) / dt, (b.y - a.y) / dt) < 120) { vu = 0; vv = 0; } // slow release = drop
+      }
     }
     const it = items.find(i => i.id === id);
-    Object.assign(it, { u, v, vu, vv, t: link.serverNow() });
+    Object.assign(it, { u, v, vu, vv, t: link.serverNow(), handoff: handoff ? link.serverNow() + 6000 : 0 });
     drag = null;
-    link.send({ t: 'drop', id, u, v, vu, vv });
+    link.send({ t: 'drop', id, u, v, vu, vv, handoff });
   }
   addEventListener('pointerup', release);
   addEventListener('pointercancel', release);
 
-  // empty floor: tap clears the selection (and opens the menu as usual)
-  $('floor').addEventListener('pointerdown', e => { if (e.target === $('floor')) selected = null; });
+  // Catching: a touch on the empty floor near a dancer that is waiting for a hand-off grabs it.
+  // If the touch arrives a moment before the hand-off message, hold it briefly.
+  const CATCH = 260;
+  let pending = null; // { pid, p, t }
+  function waitingNear(p) {
+    const now = link.serverNow();
+    let best = null, bd = CATCH;
+    for (const it of items) {
+      if (!(it.handoff > now) || it.owner) continue;
+      const { u, v } = itemUV(it, now);
+      const c = uvToPx(curWall, u, v);
+      const d = Math.hypot(c.x - p.x, c.y - p.y);
+      if (d < bd) { bd = d; best = it; }
+    }
+    return best;
+  }
+  function tryCatchPending() {
+    if (!pending || drag || performance.now() - pending.t > 900) return;
+    const it = waitingNear(pending.p);
+    if (it) { const pid = pending.pid; const p = pending.p; pending = null; grabAt(it.id, pid, p, true, $('floor')); }
+  }
+  $('floor').addEventListener('pointerdown', e => {
+    if (e.target !== $('floor') || !curWall || drag) return;
+    const p = toWall(e);
+    const it = waitingNear(p);
+    if (it) { e.preventDefault(); grabAt(it.id, e.pointerId, p, true, $('floor')); return; }
+    selected = null; // empty floor: clear the selection (and open the menu as usual)
+    pending = { pid: e.pointerId, p, t: performance.now() };
+    try { $('floor').setPointerCapture(e.pointerId); } catch {}
+  });
+  // a caught dancer should not also toggle the menu
+  $('floor').addEventListener('click', e => { if (drag || (selected && items.find(i => i.id === selected)?.t > link.serverNow() - 400)) e.stopPropagation(); });
 
   (function renderDancers() {
     requestAnimationFrame(renderDancers);
@@ -550,6 +612,7 @@ function startRoom() {
       el.style.zIndex = it.z;
       el.classList.toggle('held', !!drag && drag.id === it.id);
       el.classList.toggle('sel', selected === it.id);
+      el.classList.toggle('waiting', it.handoff > now && !(drag && drag.id === it.id));
     }
   })();
 
